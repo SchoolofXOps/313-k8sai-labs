@@ -98,7 +98,7 @@ RUNS="${RUNS:-2}"
 # planning/lab-tests/raw/spike-02/probe-minio-image-availability.log), so the
 # S3 path runs SeaweedFS instead. The path is labelled for what it actually
 # runs — calling a SeaweedFS figure a MinIO figure would be exactly the kind of
-# claim the Lab Truth Contract forbids. See minio.yaml and harness-config.md.
+# claim the Lab Truth Contract forbids. See s3.yaml and harness-config.md.
 PATHS="${PATHS:-s3 nfs pvc hostpath}"
 NAMESPACE="${NAMESPACE:-spike-02}"
 CONTEXT="${CONTEXT:-kind-spike-core}"
@@ -593,12 +593,12 @@ kcn create configmap spike-02-probe --from-file=probe.py="${PROBE_PY}" \
   --dry-run=client -o yaml | kcn apply -f - >/dev/null
 rm -f "${PROBE_PY}"
 
-# path id -> manifest file. `s3` reads minio.yaml: the file keeps the name the
-# four-path design gave it, and its header records why the image inside it is
-# not MinIO.
+# path id -> manifest file. `s3` reads s3.yaml, matching the path id and every
+# internal object name; its header records why the image inside it is SeaweedFS
+# and not MinIO.
 manifest_for() {
   case "$1" in
-    s3)       echo "${HARNESS_DIR}/minio.yaml" ;;
+    s3)       echo "${HARNESS_DIR}/s3.yaml" ;;
     nfs)      echo "${HARNESS_DIR}/nfs.yaml" ;;
     pvc)      echo "${HARNESS_DIR}/pvc.yaml" ;;
     hostpath) echo "${HARNESS_DIR}/hostpath.yaml" ;;
@@ -870,8 +870,8 @@ Evidence: \`planning/lab-tests/raw/spike-02/probe-minio-image-availability.log\`
 
 A lab whose image cannot be pulled is a broken lab, so the S3 path runs **SeaweedFS** instead and
 is labelled \`s3\`, not \`minio\` — calling a SeaweedFS figure a MinIO figure is exactly the class
-of claim the Lab Truth Contract forbids. The manifest keeps the filename \`minio.yaml\` so the
-harness's file set still matches its design, and its header carries the same explanation.
+of claim the Lab Truth Contract forbids. The manifest is \`s3.yaml\`, matching the path id and
+every internal object name, and its header carries the same explanation.
 **This is a stack-pin finding that needs founder sign-off, not a silent substitution.**
 
 ## What is actually under each path

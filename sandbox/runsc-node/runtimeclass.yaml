@@ -28,6 +28,38 @@
 # against a stock kind cluster creates the object successfully and every Pod
 # that uses it stays Pending or falls back -- the object's existence proves
 # nothing about the node.
+#
+# WR-06 -- two fields are deliberately absent, and the reasons are the lesson.
+#
+# `scheduling.nodeSelector` would make the silent-fallback failure described
+# above impossible: the scheduler would place a runsc Pod only on nodes
+# carrying the label. It is NOT set here because, in every profile this course
+# currently ships, nothing applies such a label -- `spike-core/create.sh`
+# builds every node from one image, so either all nodes carry runsc or none
+# do, and CI creates a bare single-node cluster with no labels at all. A
+# selector matching no node does not harden anything; it strands every Pod in
+# Pending, which is a worse lie than the one it was meant to prevent.
+#
+# It becomes MANDATORY the moment a profile mixes node images -- the planned
+# 16 GB profile (1 control-plane + 2 workers) is exactly that case. To enable
+# it then, label the runsc-built nodes and uncomment the block below together,
+# never one without the other:
+#
+#   kubectl label node <runsc-built-node> 313.k8sai/runtime=runsc
+#
+# scheduling:
+#   nodeSelector:
+#     313.k8sai/runtime: runsc
+#
+# `overhead.podFixed` is absent because the gVisor sentry's per-sandbox RSS
+# HAS NOT BEEN MEASURED in the declared environment. SPIKE-01 proved the
+# nesting works; it did not weigh the sentry. Without `overhead` the scheduler
+# accounts none of that cost, which matters for M11's warm pool of 5 on a
+# 7.74 GiB VM -- but an estimated value would be a fabricated number in a
+# course whose Truth Contract exists to forbid exactly that. Measure it with
+# labs/tools/measure.sh against a one-sandbox and a five-sandbox cluster, take
+# the difference, then set it. Tracked in .planning/WINDOWS.md.
+#
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:

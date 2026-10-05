@@ -79,6 +79,25 @@ if ! docker buildx version >/dev/null 2>&1; then
   exit 1
 fi
 
+# jq is REQUIRED, and it is checked here — before the build — rather than
+# discovered after it.
+#
+# The OCI index read below is the ONLY evidence for this script's multi-arch
+# claim: the whole point (header, lines 8-12) is that the claim rests on the
+# index actually carrying two platform manifests, "rather than the claim
+# resting on the fact that the Dockerfile mentions two arch names". Without jq
+# that read used to degrade to `cat index.json` with PLATFORM_COUNT="unknown",
+# which short-circuited the count guard — and the script still printed
+# `OK: ... built for linux/arm64,linux/amd64`. The evidence path vanished while
+# the verdict line stayed the same, which is the one outcome this file must not
+# produce.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "FAIL: jq is required to read the OCI index, which is the only evidence" >&2
+  echo "      for this script's multi-arch claim. Install it (brew install jq)." >&2
+  echo "      Checked before the build so a 10-minute build is not wasted." >&2
+  exit 1
+fi
+
 HOST_ARCH="$(docker version --format '{{.Server.Arch}}' 2>/dev/null || true)"
 if [ -z "${HOST_ARCH}" ]; then
   echo "FAIL: cannot reach the docker daemon to determine the host architecture." >&2
@@ -124,7 +143,10 @@ fi
 echo
 echo "==> per-platform manifests in the OCI index:"
 tar -xOf "${OUT_DIR}/image.tar" index.json > "${OUT_DIR}/index.json"
-if command -v jq >/dev/null 2>&1; then
+# jq is asserted present at the top of this script, so there is no longer a
+# jq-less branch here. The previous `else` set PLATFORM_COUNT="unknown", which
+# made the guard below short-circuit and let the OK line print unchanged.
+{
   # A multi-platform build writes a top-level descriptor pointing at an image
   # INDEX, whose own manifests carry .platform. A single-platform build writes
   # the image MANIFEST straight into index.json, with no .platform on it at
@@ -159,14 +181,11 @@ if command -v jq >/dev/null 2>&1; then
       PLATFORM_COUNT=1
       ;;
   esac
-else
-  echo "    (jq unavailable -- raw index below)"
-  cat "${OUT_DIR}/index.json"
-  PLATFORM_COUNT="unknown"
-fi
+}
 
 WANTED_COUNT="$(printf '%s' "${PLATFORMS}" | tr ',' '\n' | grep -c . || true)"
-if [ "${PLATFORM_COUNT}" != "unknown" ] && [ "${PLATFORM_COUNT}" -lt "${WANTED_COUNT}" ]; then
+# No `!= "unknown"` escape hatch: PLATFORM_COUNT is always a number now.
+if [ "${PLATFORM_COUNT}" -lt "${WANTED_COUNT}" ]; then
   echo "FAIL: the OCI index carries ${PLATFORM_COUNT} platform manifest(s) but ${WANTED_COUNT} were requested." >&2
   echo "      One architecture did not build; D-10's multi-arch claim is unproven." >&2
   exit 1

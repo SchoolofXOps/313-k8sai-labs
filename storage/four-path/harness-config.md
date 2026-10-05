@@ -44,8 +44,8 @@ Evidence: `planning/lab-tests/raw/spike-02/probe-minio-image-availability.log`.
 
 A lab whose image cannot be pulled is a broken lab, so the S3 path runs **SeaweedFS** instead and
 is labelled `s3`, not `minio` — calling a SeaweedFS figure a MinIO figure is exactly the class
-of claim the Lab Truth Contract forbids. The manifest keeps the filename `minio.yaml` so the
-harness's file set still matches its design, and its header carries the same explanation.
+of claim the Lab Truth Contract forbids. The manifest is `s3.yaml`, matching the path id and
+every internal object name, and its header carries the same explanation.
 **This is a stack-pin finding that needs founder sign-off, not a silent substitution.**
 
 ## What is actually under each path

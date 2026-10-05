@@ -23,6 +23,28 @@
 # `kubectl explain`, not carried over from memory.
 #
 # ---------------------------------------------------------------------------
+# FLEET PRECONDITION — this manifest is NOT fleet-size-agnostic
+# ---------------------------------------------------------------------------
+# Every number below, and the ClusterQueue's nominalQuota, assume EXACTLY the
+# default fleet that labs/kwok/attach/setup.sh creates:
+#
+#     FAKE_NODES=6   RACKS_PER_BLOCK=3   NODE_CPU=8   NODE_MEMORY=32Gi
+#
+# setup.sh advertises `FAKE_NODES=12` as a knob, and that knob is real and
+# needed for the SCALE profile — but applying THIS manifest against a fleet of
+# any other shape silently invalidates the experiment rather than breaking it,
+# which is worse. At FAKE_NODES=12 the fleet is 96 cpu against a 48 cpu quota,
+# so quota becomes the binding constraint and the negative control
+# (gang-rack-oversized) is refused by QUOTA rather than by TOPOLOGY — it still
+# LOOKS like it passes, for the wrong reason, and nothing in the output says
+# so. The "2 blocks x 3 racks" and "block domain capacity = 23.7 cpu" figures
+# below are likewise fixed text tied to 6 nodes / 3 racks per block.
+#
+# setup.sh now prints a loud NOTE when FAKE_NODES or RACKS_PER_BLOCK deviate
+# from these values, naming this file. If you changed them deliberately, do
+# NOT apply this manifest: re-derive the quota and the arithmetic first.
+#
+# ---------------------------------------------------------------------------
 # The arithmetic, stated once, because the whole spike rests on it
 # ---------------------------------------------------------------------------
 # Each simulated node: 8 cpu / 32Gi. kindnet already requests 100m/50Mi on
@@ -186,10 +208,23 @@ spec:
           effect: NoSchedule
       containers:
         - name: gang
-          # Never pulled: these pods only ever land on simulated nodes, where
-          # kwok fakes the kubelet and no image is fetched. Named rather than
-          # left blank so the manifest is a valid object a learner can read.
-          image: registry.k8s.io/pause:3.10
+          # Normally never pulled: these pods only ever land on simulated
+          # nodes, where kwok fakes the kubelet and no image is fetched. Named
+          # rather than left blank so the manifest is a valid object a learner
+          # can read.
+          #
+          # DIGEST-pinned anyway, for two reasons. The "never pulled"
+          # reasoning holds only while the ResourceFlavor's
+          # `nodeLabels: type: kwok` and the NoSchedule taint both do their
+          # job — a learner who removes a toleration, mislabels the real
+          # worker, or runs these Jobs outside the flavor gets a real pull of
+          # a mutable tag. And D-17 applies to the whole lab surface, which
+          # Phase 3 SC2 greps for the tag form.
+          #
+          # Index (manifest-list) digest, resolved with
+          # `docker buildx imagetools inspect registry.k8s.io/pause:3.10`, so
+          # the same pin works on linux/arm64 and linux/amd64 (both present).
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
           resources:
             requests:
               cpu: "2"
@@ -228,7 +263,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: gang
-          image: registry.k8s.io/pause:3.10
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
           resources:
             requests:
               cpu: "6"
@@ -269,7 +304,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: gang
-          image: registry.k8s.io/pause:3.10
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
           resources:
             requests:
               cpu: "6"

@@ -149,6 +149,26 @@ RUN set -eux; \
 #
 # Appended rather than rewritten: kind's entrypoint rewrites the snapshotter
 # line in this file at node start, so the base content must survive intact.
+# Cgroup-driver note, corrected. An earlier version of this stanza carried
+# `SystemdCgroup = true` under the runsc options, with a comment claiming it
+# matched the runc handler's systemd cgroup driver. It did not:
+# `runtime_type = "io.containerd.runsc.v1"` decodes its options as
+# runtimeoptions.Options, whose only fields are TypeUrl, ConfigPath and
+# ConfigBody. SystemdCgroup belongs to the runc **v2** options struct, so the
+# key was at best inert here and at worst logged as an undecoded field — and
+# the comment asserted a property this file did not actually have.
+#
+# The line is removed rather than relocated, because where it would need to go
+# is not established: if a systemd cgroup path is genuinely required it has to
+# be configured through runsc.toml or the CRI plugin's own `systemd_cgroup`,
+# not through an option the shim does not read. SPIKE-01 passed with the inert
+# key present, so this is a latent inconsistency and not a current outage, and
+# nothing here should claim a driver match that was never measured.
+#
+# To settle it empirically, from inside the node, for a Pod under runsc:
+#   crictl inspect <id> | jq '.info.runtimeSpec.linux.cgroupsPath'
+#   systemd driver -> "kubepods-....slice:cri-containerd:<id>"
+#   cgroupfs       -> "/kubepods/..."
 RUN set -eux; \
     printf '\n' >> /etc/containerd/config.toml; \
     printf '%s\n' \
@@ -156,10 +176,11 @@ RUN set -eux; \
       '# Handler name `runsc` must match handler: in runtimeclass.yaml.' \
       '[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]' \
       '  runtime_type = "io.containerd.runsc.v1"' \
-      '  # Match the runc handler: kind nodes run the systemd cgroup driver.' \
+      '  # Options for runtime_type io.containerd.runsc.v1 are' \
+      '  # runtimeoptions.Options: TypeUrl, ConfigPath, ConfigBody only.' \
+      '  # The cgroup driver is NOT configurable here.' \
       '  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]' \
       '    TypeUrl = "io.containerd.runsc.v1.options"' \
       '    ConfigPath = "/etc/containerd/runsc.toml"' \
-      '    SystemdCgroup = true' \
       >> /etc/containerd/config.toml; \
     tail -n 12 /etc/containerd/config.toml

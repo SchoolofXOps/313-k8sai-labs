@@ -35,7 +35,11 @@
 # Usage:
 #   bash setup.sh                     # install controller + stages + fake fleet
 #   bash setup.sh teardown            # remove fake fleet + stages + controller
-#   FAKE_NODES=12 bash setup.sh       # bigger simulated fleet
+#   FAKE_NODES=12 bash setup.sh       # bigger simulated fleet. NOTE: valid for
+#                                     # the SCALE profile, but kueue-v1beta2.yaml's
+#                                     # quota and published arithmetic assume the
+#                                     # default 6 nodes / 3 racks — see the
+#                                     # FLEET PRECONDITION block in that file.
 #
 # Env (match planning/lab-tests/spike-00-preflight.md on the build host):
 #   export KUBECONFIG=/tmp/spike-core.kubeconfig   # isolated; set by the profile
@@ -190,6 +194,17 @@ preflight() {
     echo "FAIL: node template not found at ${NODE_TEMPLATE}." >&2
     exit 1
   fi
+  # jq is used by assert_fleet and by the OK line, both of which run AFTER the
+  # controller, the CRDs, the ClusterRole and six simulated nodes are already
+  # installed. Absent, the pipeline returned 127 and `set -e` aborted with
+  # `jq: command not found` and no FAIL: line, leaving a half-configured
+  # cluster. Checked here instead, while the cluster is still untouched.
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "FAIL: jq is required to assert the simulated fleet reached Ready." >&2
+    echo "      Install it (brew install jq) and re-run; nothing has been" >&2
+    echo "      installed into '${CLUSTER_NAME}' yet." >&2
+    exit 1
+  fi
 }
 
 # --- controller ---------------------------------------------------------------
@@ -280,6 +295,24 @@ deploy_nodes() {
   echo "==> Creating ${FAKE_NODES} SIMULATED node(s): ${NODE_CPU} cpu / ${NODE_MEMORY} each,"
   echo "    arch label ${ARCH_LABEL}, ${RACKS_PER_BLOCK} rack(s) per topology block,"
   echo "    adoption annotation kwok.x-k8s.io/node=fake, taint kwok.x-k8s.io/node=fake:NoSchedule"
+  # kueue-v1beta2.yaml's nominalQuota (48 cpu / 192Gi) and its entire published
+  # arithmetic are fixed for 6 nodes x 8 cpu with 3 racks per block. A
+  # different fleet does not break that manifest, it INVALIDATES it: at
+  # FAKE_NODES=12 the fleet is 96 cpu against a 48 cpu quota, so quota becomes
+  # the binding constraint and the TAS negative control is refused by quota
+  # rather than by topology — it still looks like it passes. Say so here, at
+  # the point the fleet is created, rather than leaving it to be discovered.
+  if [ "${FAKE_NODES}" != "6" ] || [ "${RACKS_PER_BLOCK}" != "3" ] \
+     || [ "${NODE_CPU}" != "8" ]; then
+    echo
+    echo "    NOTE: this fleet is ${FAKE_NODES} node(s) x ${NODE_CPU} cpu, ${RACKS_PER_BLOCK} rack(s)/block." >&2
+    echo "          kueue-v1beta2.yaml assumes 6 x 8 cpu / 3 racks per block, and its" >&2
+    echo "          quota and arithmetic are fixed text. Do NOT apply it against this" >&2
+    echo "          fleet without re-deriving both: the TAS negative control would be" >&2
+    echo "          refused by QUOTA rather than by TOPOLOGY and would still appear to" >&2
+    echo "          pass. See the FLEET PRECONDITION block in that file." >&2
+    echo
+  fi
   local i=0
   while [ "${i}" -lt "${FAKE_NODES}" ]; do
     render_node "${i}" | kc apply -f -

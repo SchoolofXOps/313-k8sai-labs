@@ -337,6 +337,22 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 30
+          # PHASE 3: MUST GAIN A MEMORY LIMIT BEFORE THIS SHIPS TO A LEARNER.
+          #
+          # Omitting the limit is correct for a MEASUREMENT run and the reason
+          # is recorded below — but D-17 makes this a real labs/ asset that
+          # Phase 3 inherits, and an unlimited container on a 7.74 GiB VM has
+          # no cgroup ceiling to hit before the VM does. That is VM-wide OOM,
+          # which kills the learner's whole cluster, not a container restart.
+          # WINDOWS #7 fences M9.3 to REAL on 16 GB / BRIEF on 8 GB, so the
+          # exposure is bounded for now and this marker is what keeps it from
+          # being forgotten when that fence is lifted.
+          #
+          # Set the limit from the MEASURED peak, not an estimate:
+          #   sim-router-epp measured 31 MiB
+          # (planning/lab-tests/spike-05-rss.md, per-pod cgroup v2
+          # memory.peak read inside the worker). Add headroom deliberately;
+          # the instrument's own run-to-run variance was +/-522 MiB.
           resources:
             requests:
               cpu: "200m"

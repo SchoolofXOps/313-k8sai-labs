@@ -128,6 +128,26 @@ data:
                       access_log_flush_interval: 5s
                     route_config:
                       name: inference
+                      # Strip the endpoint header on INGRESS, before ext_proc
+                      # runs. ORIGINAL_DST below is configured with
+                      # `use_http_header: true` on
+                      # x-gateway-destination-endpoint, which means Envoy's
+                      # upstream destination is whatever that header says.
+                      # Without this removal nothing guarantees the value came
+                      # from the EPP rather than from the client, and whether a
+                      # client-supplied value survives depends on the append
+                      # semantics of the EPP's header mutation — not a property
+                      # this lab controls or asserts.
+                      #
+                      # In this lab the blast radius is small (ClusterIP only,
+                      # reached by `kubectl port-forward`, so the "attacker" is
+                      # the learner). It matters because this file is teaching
+                      # material for M9: a learner who lifts this config into
+                      # anything reachable otherwise has an arbitrary
+                      # in-cluster destination primitive. Only the EPP may set
+                      # this header; never the client.
+                      request_headers_to_remove:
+                        - x-gateway-destination-endpoint
                       virtual_hosts:
                         - name: inference
                           domains: ["*"]
@@ -290,6 +310,22 @@ spec:
               port: 19001
             periodSeconds: 5
             failureThreshold: 30
+          # PHASE 3: MUST GAIN A MEMORY LIMIT BEFORE THIS SHIPS TO A LEARNER.
+          #
+          # Omitting the limit is correct for a MEASUREMENT run and the reason
+          # is recorded below — but D-17 makes this a real labs/ asset that
+          # Phase 3 inherits, and an unlimited container on a 7.74 GiB VM has
+          # no cgroup ceiling to hit before the VM does. That is VM-wide OOM,
+          # which kills the learner's whole cluster, not a container restart.
+          # WINDOWS #7 fences M9.3 to REAL on 16 GB / BRIEF on 8 GB, so the
+          # exposure is bounded for now and this marker is what keeps it from
+          # being forgotten when that fence is lifted.
+          #
+          # Set the limit from the MEASURED peak, not an estimate:
+          #   sim-router-envoy measured 24 MiB
+          # (planning/lab-tests/spike-05-rss.md, per-pod cgroup v2
+          # memory.peak read inside the worker). Add headroom deliberately;
+          # the instrument's own run-to-run variance was +/-522 MiB.
           resources:
             requests:
               cpu: "100m"

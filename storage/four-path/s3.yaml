@@ -1,6 +1,6 @@
 # four-path storage harness — the `s3` path (object storage)
 #
-# ## Why this file is called minio.yaml and does not run MinIO
+# ## Why this file is called s3.yaml and does not run MinIO
 #
 # The four-path design named **MinIO** as the S3 stand-in: real S3 protocol,
 # real throughput on local disk. On 2026-10-05 the MinIO community container
@@ -20,11 +20,24 @@
 # Labelling a SeaweedFS figure as a MinIO figure is exactly the class of claim
 # the Lab Truth Contract forbids.
 #
-# The FILENAME is kept so the harness's file set still matches the four-path
-# design it implements, and so the substitution is impossible to miss: anyone
-# opening minio.yaml reads this header first. **This is a stack-pin finding
-# that needs founder sign-off, not a silent substitution** — CLAUDE.md § Part B
-# still names MinIO as the S3 stand-in for M6.
+# The FILENAME was originally kept as `minio.yaml` so the harness's file set
+# matched the four-path design it implements. That was the weaker side of the
+# trade: the design document is editable, a filename is what a future author
+# greps for, and a `minio.yaml` that has never contained MinIO would eventually
+# be cited as evidence that MinIO was measured. So the file is now `s3.yaml`,
+# matching what every internal name already said (Service `s3`, Deployment
+# `s3-server`, PVC `spike02-s3-data`, `path: s3` labels, probe target
+# `http://s3:8333`), and this header travels with it as the durable record.
+#
+# **This is a stack-pin finding that needs founder sign-off, not a silent
+# substitution** — CLAUDE.md § Part B still names MinIO as the S3 stand-in for
+# M6, and WINDOWS #4 is open pending that sign-off.
+#
+# NOTE for anyone reading the recorded captures: planning/lab-tests/
+# spike-02-storage.md and the raw harness-config captures under
+# planning/lab-tests/raw/spike-02/ still say `minio.yaml`. They are the record
+# of what was true when those runs were measured and are deliberately NOT
+# rewritten; no measured number changed with this rename.
 #
 # ## What is measured
 #
