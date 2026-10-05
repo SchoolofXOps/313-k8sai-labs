@@ -1,0 +1,135 @@
+# sim-router — vLLM render service (the SHARED tokenizer)
+#
+# Purpose: one tokenizer, shared by every simulator replica AND by the router's
+# token-producer plugin.
+#
+# Mechanism — why this component is NOT optional, which is the single least
+# obvious fact in this lab:
+#
+#   The router's precise-prefix-cache producer correlates a request against a
+#   pod's cache by TOKEN IDS, not by text. It recomputes KV-block keys itself on
+#   BOTH paths — the lookup path (token IDs for the incoming prompt, from
+#   `token-producer`) and the KV-event ingestion path (the `token_ids` array
+#   carried inside the simulator's own BlockStored event). Upstream states this
+#   directly: "Block keys are recomputed by the EPP from TokenizedPrompt on both
+#   the lookup path and the KV-event ingestion path ... so blockSizeTokens/
+#   hashSeed need not match the engine."
+#
+#   Correlation therefore requires only ONE thing: that the token IDs the router
+#   computes for a prompt equal the token IDs the simulator reported for that
+#   same prompt. It does NOT require matching hash seeds or block sizes.
+#
+#   The simulator has two tokenizers: a real one (HuggingFace, via this render
+#   service, selected by --render-url) and a fast in-process regex tokenizer with
+#   FNV-32a pseudo-hashes (selected by OMITTING --render-url). The router's
+#   token-producer has its own two backends: `vllm` (this render service) and
+#   `estimate` (tokenizer-free byte-packing).
+#
+#   The regex/FNV path and the byte-packing path are DIFFERENT algorithms, so they
+#   emit different token IDs for the same text. Pairing them produces a router
+#   that subscribes to the event stream, ingests every event, and still never
+#   matches a block — a silent, total failure that looks like "prefix-cache
+#   routing does not work" rather than like a misconfiguration. Upstream's
+#   tokenization doc says so in as many words: the pseudo-hash fallback is "a
+#   mismatch that breaks KV-cache block hashing and prefix-cache-aware routing".
+#
+#   Pointing both sides at this one render service makes the token IDs identical
+#   by construction. That is why the lab pays for a vLLM container on an 8 GB
+#   laptop.
+#
+# This is also why the lab canNOT use the simulator's zero-startup-cost dummy
+# model path. That path is correct for throughput and latency work (M8.1's
+# saturation knee); it is incompatible with precise prefix-cache routing (M9.3).
+#
+# Truth Contract: SIMULATED. This container runs REAL vLLM code, but only its
+# tokenizer (`vllm launch render`) — it loads NO model weights and performs NO
+# inference. Nothing here measures a model server's performance.
+#
+# Image: vllm/vllm-openai-cpu — the CPU variant, multi-arch
+# linux/amd64 + linux/arm64/v8, digest-pinned. NOTE: this is a different image
+# from `vllm/vllm-openai`, which is CUDA-only and will not start here.
+# Tag v0.21.0 is chosen to match the simulator repo's OWN tested
+# manifests/deployment_kvcache.yaml at the v0.11.2 tag, not the course's
+# v0.30.0 vLLM pin: the component that has to interoperate is the simulator.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-render
+  labels:
+    app: vllm-render
+    lab: sim-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-render
+  template:
+    metadata:
+      labels:
+        app: vllm-render
+        lab: sim-router
+    spec:
+      containers:
+        - name: render
+          image: vllm/vllm-openai-cpu@sha256:fc78b363009faa519a0adb5f1a287a533a922970f4463e73c00053a4aa2136e8
+          imagePullPolicy: IfNotPresent
+          command: ["vllm"]
+          # `launch render` serves ONLY the tokenizer endpoints
+          # (/v1/completions/render, /v1/chat/completions/render). No weights.
+          # Qwen/Qwen2.5-1.5B-Instruct is UNGATED on HuggingFace: no HF_TOKEN, no
+          # licence click-through, so the lab has no credential prerequisite. Its
+          # 1.5B size also sits inside the 1-3B class of the latency profile this
+          # lab cites (see policies.md).
+          args:
+            - "launch"
+            - "render"
+            - "Qwen/Qwen2.5-1.5B-Instruct"
+            - "--port=8082"
+          ports:
+            - name: render-http
+              containerPort: 8082
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            # Generous: a cold start here is an image pull plus a tokenizer
+            # download plus a Python/torch import. That cost is INSIDE D-20's
+            # measured budget and must be allowed to complete rather than be
+            # cut short by a probe — a startupProbe that fails the pod would
+            # turn a slow lab into a broken one and corrupt the measurement.
+            periodSeconds: 5
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            periodSeconds: 10
+          resources:
+            # Requests only, NO memory limit. The upstream chart requests
+            # cpu: 4 / memory: 8Gi for this same container, which is larger than
+            # this whole VM — so upstream's requests cannot be used verbatim.
+            # Requests are scheduling hints; a limit would OOM-kill the container
+            # and destroy the measurement instead of recording it. SPIKE-05 reads
+            # the kernel's cgroup high-water mark at the NODE level, so the real
+            # cost is captured either way (D-14).
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-render
+  labels:
+    app: vllm-render
+    lab: sim-router
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-render
+  ports:
+    - name: render-http
+      port: 8082
+      targetPort: 8082
+      protocol: TCP

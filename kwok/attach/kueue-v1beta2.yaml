@@ -1,0 +1,276 @@
+---
+# kueue-v1beta2.yaml — Kueue v0.20.x quota + Topology-Aware Scheduling over the
+# simulated kwok fleet, with three gangs that make the TAS claim falsifiable.
+#
+# EVERY object here is on kueue.x-k8s.io/v1beta2. Kueue v0.20.0 STOPPED SERVING
+# kueue.x-k8s.io/v1beta1 — this is not a deprecation warning, the API server
+# returns the group as unserved and rejects the object. Measured live on this
+# cluster (planning/lab-tests/raw/spike-04/kueue-install.log):
+#
+#     $ kubectl get crd clusterqueues.kueue.x-k8s.io -o jsonpath=...
+#     v1beta1 served=false storage=false
+#     v1beta2 served=true  storage=true
+#
+# Any ClusterQueue / LocalQueue / ResourceFlavor YAML lifted from 304-kubeadv,
+# from a blog, or from 2025 docs is on the dead group. Upstream ships
+# hack/migrate-to-v1beta2.sh for inherited YAML. The Kueue CONFIG object is a
+# separate group and is also at v1beta2 — the chart's kueue-manager-config
+# ConfigMap opens with `apiVersion: config.kueue.x-k8s.io/v1beta2`.
+#
+# Field names changed with the group, not only the version string: in v1beta2 a
+# ClusterQueue joins a cohort through `spec.cohortName` (a string), where
+# v1beta1 used `spec.cohort`. Schemas below were read off the live CRDs with
+# `kubectl explain`, not carried over from memory.
+#
+# ---------------------------------------------------------------------------
+# The arithmetic, stated once, because the whole spike rests on it
+# ---------------------------------------------------------------------------
+# Each simulated node: 8 cpu / 32Gi. kindnet already requests 100m/50Mi on
+# every one of them, so 7.9 cpu is genuinely free per node. The fleet is
+# 2 topology blocks x 3 racks each, ONE node per rack, with GLOBALLY UNIQUE
+# rack label values (rack-0..rack-5) so "this gang stayed inside one rack"
+# cannot pass by coincidence.
+#
+#   rack  domain capacity = 1 node  =  7.9 cpu free
+#   block domain capacity = 3 nodes = 23.7 cpu free
+#
+# ClusterQueue nominal quota is 48 cpu / 192Gi — the whole fleet. That is
+# DELIBERATE: quota is sized NOT to be the binding constraint, so when the
+# negative control is refused, topology is the only thing that can have
+# refused it. A quota-tight ClusterQueue would make the negative control
+# ambiguous, and an ambiguous negative control proves nothing.
+#
+#   gang-rack            3 pods x 2 cpu =  6 cpu, required: rack
+#                        -> 6 <= 7.9, fits one rack. ADMITTED.
+#   gang-rack-oversized  3 pods x 6 cpu = 18 cpu, required: rack
+#                        -> 18 > 7.9, fits NO rack. REFUSED.
+#                        Note each pod ALONE (6 cpu) fits a node — so this is
+#                        not a per-pod capacity failure, it is a topology
+#                        DOMAIN-AGGREGATE failure. That distinction is the
+#                        negative control.
+#   gang-block           3 pods x 6 cpu = 18 cpu, required: block
+#                        -> 18 <= 23.7 across 3 nodes of one block. ADMITTED,
+#                        and necessarily spread over THREE simulated nodes,
+#                        which is what shows the constraint binds at the level
+#                        you name and not at some other level.
+#
+# gang-block lives in its own namespace so that the "every pod of the admitted
+# gang is inside ONE rack" assertion over namespace spike-04 stays literally
+# true: gang-block is a BLOCK-level gang and spans three racks on purpose.
+#
+# Nothing here is a GPU. The nodes are simulated, the devices are not modelled
+# at all, and the resources being queued are plain cpu and memory.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spike-04
+  labels:
+    spike: "04"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spike-04-block
+  labels:
+    spike: "04"
+---
+# The topology hierarchy, outermost level first. Each nodeLabel MUST be a label
+# key that actually exists on the nodes of every flavor pointing at this
+# Topology — these two keys are written by labs/kwok/attach/fake-nodes.yaml. A
+# typo here does not error; it silently makes every placement infeasible.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: Topology
+metadata:
+  name: spike-04-topology
+spec:
+  levels:
+    - nodeLabel: cloud.provider.com/topology-block
+    - nodeLabel: cloud.provider.com/topology-rack
+---
+# Binds quota to the SIMULATED fleet and nothing else.
+#   nodeLabels   -> Kueue adds this as a nodeSelector to admitted pods, so the
+#                   real kind worker can never satisfy this flavor's quota.
+#   tolerations  -> Kueue adds these to admitted pods, which is how a workload
+#                   opts in to the NoSchedule taint every fake node carries.
+#                   Without this (or an explicit toleration on the pod
+#                   template) an admitted pod is unschedulable forever.
+#   topologyName -> switches this flavor to Topology-Aware Scheduling, enabled
+#                   by the TopologyAwareScheduling feature gate, which is beta
+#                   and DEFAULT-ON since Kueue v0.14 (confirmed true on this
+#                   controller in raw/spike-04/workload-name-collision.log).
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: kwok-simulated
+spec:
+  nodeLabels:
+    type: kwok
+  tolerations:
+    - key: kwok.x-k8s.io/node
+      operator: Equal
+      value: fake
+      effect: NoSchedule
+  topologyName: spike-04-topology
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: spike-04-cq
+spec:
+  namespaceSelector: {}
+  # BestEffortFIFO, stated explicitly rather than relied on as the default:
+  # the negative control sits in this queue permanently un-admitted, and under
+  # StrictFIFO it would block every workload behind it, so the two admitted
+  # gangs would look refused for the wrong reason.
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: kwok-simulated
+          resources:
+            # The whole simulated fleet: 6 nodes x 8 cpu / 32Gi. Quota is
+            # deliberately slack — see the arithmetic note at the top.
+            - name: "cpu"
+              nominalQuota: "48"
+            - name: "memory"
+              nominalQuota: 192Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: spike-04-lq
+  namespace: spike-04
+spec:
+  clusterQueue: spike-04-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: spike-04-block-lq
+  namespace: spike-04-block
+spec:
+  clusterQueue: spike-04-cq
+---
+# POSITIVE CASE — a rack-level gang that fits one rack.
+#
+# suspend: true is mandatory: it is how a Job hands admission to Kueue instead
+# of going straight to the scheduler. Kueue unsuspends it only once quota is
+# reserved AND a topology assignment exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gang-rack
+  namespace: spike-04
+  labels:
+    kueue.x-k8s.io/queue-name: spike-04-lq
+spec:
+  parallelism: 3
+  completions: 3
+  suspend: true
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        # The TAS request. `required` means: refuse admission unless every pod
+        # of this PodSet fits inside a SINGLE domain at this level.
+        kueue.x-k8s.io/podset-required-topology: cloud.provider.com/topology-rack
+    spec:
+      restartPolicy: Never
+      # Explicit as well as flavor-supplied: the toleration is the only reason
+      # a pod may be placed on a node with no kubelet.
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: gang
+          # Never pulled: these pods only ever land on simulated nodes, where
+          # kwok fakes the kubelet and no image is fetched. Named rather than
+          # left blank so the manifest is a valid object a learner can read.
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+---
+# NEGATIVE CONTROL — the same shape, oversized for any one rack.
+#
+# 3 x 6 cpu = 18 cpu. No rack has 18 cpu (a rack is one 8 cpu node, 7.9 free),
+# but a SINGLE pod does fit a node. Quota permits 18 of 48. So the only thing
+# that can refuse this is the rack-level topology constraint.
+#
+# A cooperative fake cannot produce this asymmetry: if something were simply
+# rubber-stamping placements, this gang would be admitted too.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gang-rack-oversized
+  namespace: spike-04
+  labels:
+    kueue.x-k8s.io/queue-name: spike-04-lq
+spec:
+  parallelism: 3
+  completions: 3
+  suspend: true
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        kueue.x-k8s.io/podset-required-topology: cloud.provider.com/topology-rack
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: gang
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "6"
+              memory: 2Gi
+---
+# HIERARCHY CASE — the identical oversized gang, required at BLOCK level.
+#
+# Same 3 x 6 cpu that no rack can hold. A block is three nodes, so this is
+# admissible, and it necessarily spreads across THREE simulated nodes inside
+# ONE block. Run beside the negative control, this is what shows the constraint
+# binds at the level named and not at a convenient one: same workload, same
+# quota, same fleet, one word different, opposite outcome.
+#
+# Its own namespace, so the rack-confinement assertion over namespace spike-04
+# is not polluted by a gang that spans racks on purpose.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gang-block
+  namespace: spike-04-block
+  labels:
+    kueue.x-k8s.io/queue-name: spike-04-block-lq
+spec:
+  parallelism: 3
+  completions: 3
+  suspend: true
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        kueue.x-k8s.io/podset-required-topology: cloud.provider.com/topology-block
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: gang
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "6"
+              memory: 2Gi

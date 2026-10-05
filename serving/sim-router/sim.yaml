@@ -1,0 +1,200 @@
+# sim-router — llm-d-inference-sim v0.11.2, THREE replicas, KV cache on
+#
+# Purpose: the fleet of model servers the router routes across, and the SOURCE
+# of the ZMQ KV-cache block-lifecycle events this spike exists to test.
+#
+# Mechanism: with --enable-kvcache, the simulator tokenizes each prompt, splits
+# it into fixed-size blocks, tracks which blocks are resident, and publishes
+# BlockStored / BlockRemoved / AllBlocksCleared events over a ZMQ PUB socket.
+# Each event carries the block's `token_ids`, which is what lets the router
+# recompute the block key itself (see render.yaml for why that matters).
+#
+# ZMQ direction of travel — the thing most likely to be wired backwards:
+#   The SIMULATOR DIALS OUT. --zmq-endpoint is an address the simulator CONNECTS
+#   to ("the simulator dials this address"), not one it binds. The ROUTER binds
+#   the SUB socket (tcp://0.0.0.0:5557 in its EndpointPickerConfig) and this
+#   Deployment dials the router's Service on 5557. Data flows sim -> router;
+#   control (the endpoint choice) flows router -> Envoy.
+#
+# THREE replicas, not one: a prefix-cache scorer with a single endpoint cannot
+# demonstrate anything at all — every request goes to the only pod whether the
+# scorer works or not. Three is the smallest fleet where "it chose the pod
+# holding the prefix" is distinguishable from "it chose the only pod" AND from
+# "it alternated".
+#
+# Truth Contract: SIMULATED. Every latency figure this component produces is
+# modelled from the cited profile below; none of it measures a real model
+# server. See policies.md for the citation and its declared conditions.
+#
+# Image: ghcr.io/llm-d/llm-d-inference-sim v0.11.2, index digest resolved by
+# Spike 0 (planning/lab-tests/spike-00-preflight.md), multi-arch arm64 + amd64.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sim-latency-profile
+  labels:
+    lab: sim-router
+data:
+  # VERBATIM COPY of manifests/latency-profiles/small-l40s-edge-per-token.yaml
+  # from llm-d-inference-sim at tag v0.11.2. Not one value is altered.
+  #
+  # TRUST-05 forbids tuning simulator latency parameters toward a more
+  # satisfying curve, so this lab does not author latency numbers at all — it
+  # adopts an upstream profile whose provenance and conditions are published
+  # (docs/latency-profiles.md: "realistic latency values gathered from publicly
+  # available benchmarks of vLLM, MLPerf, and GPU vendors ... assume FP16/BF16
+  # weights, batch size 1, and reasonable production settings (PagedAttention,
+  # FlashAttention, no CPU offload)").
+  #
+  # The ONE documented override is `model`, set on the command line to the
+  # ungated Qwen/Qwen2.5-1.5B-Instruct so the lab needs no HuggingFace token.
+  # Command-line values overwrite configuration-file values. Qwen2.5-1.5B is in
+  # the same 1-3B class this profile targets. The override is declared here and
+  # in policies.md rather than being applied by editing the profile, so the file
+  # stays diffable against upstream.
+  latency-profile.yaml: |
+    # Profile 3: Small (1-3B) model on L40S, low-latency edge (per-token calculator).
+    # Same target deployment as the constant calculator, but TTFT and KV-transfer scale with prompt
+    # length.
+    # See docs/latency-profiles.md for the full discussion.
+
+    port: 8000
+    model: "meta-llama/Llama-3.2-3B-Instruct"
+    max-num-seqs: 4
+    mode: "random"
+    latency-calculator: per-token
+
+    inter-token-latency: 15ms
+    inter-token-latency-std-dev: 2ms
+
+    prefill-overhead: 20ms
+    prefill-time-per-token: 350us
+    prefill-time-std-dev: 3ms
+
+    kv-cache-transfer-time-per-token: 12us
+    kv-cache-transfer-time-std-dev: 500us
+
+    time-factor-under-load: 1.5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sim
+  labels:
+    app: sim
+    lab: sim-router
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sim
+  template:
+    metadata:
+      labels:
+        # The router's --endpoint-selector matches on THIS label. There is no
+        # InferencePool and no Gateway API CRD anywhere in this lab; endpoint
+        # discovery is a plain label selector over Pods.
+        app: sim
+        lab: sim-router
+    spec:
+      containers:
+        - name: sim
+          image: ghcr.io/llm-d/llm-d-inference-sim@sha256:32144df791330a0006b747edfdf2b114a0fe728e023a9d1b3463eeb48d32abb9
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config=/config/latency-profile.yaml"
+            # Documented override of the profile's `model` — see the ConfigMap
+            # comment. MUST equal the model the render service was launched with,
+            # or the two sides tokenize against different vocabularies.
+            - "--model=Qwen/Qwen2.5-1.5B-Instruct"
+            - "--port=8000"
+            # --- the tokenizer, shared with the router (see render.yaml) -------
+            - "--render-url=http://vllm-render:8082"
+            # --- KV cache simulation: the event source under test --------------
+            - "--enable-kvcache=true"
+            # 16 tokens/block, matching the router's tokenProcessorConfig
+            # blockSizeTokens. They need not match for correlation (the router
+            # rehashes), but keeping them equal makes the block accounting on
+            # the two sides directly comparable when reading the captures.
+            - "--block-size=16"
+            # 64 blocks = 1024 tokens of cache PER POD. The default is 1024
+            # blocks (16384 tokens), which no laptop-scale request set could ever
+            # fill — and an eviction that never happens cannot be observed.
+            # This is a declared CAPACITY knob, not a latency parameter: it
+            # changes how much fits, never how fast anything is modelled to be,
+            # so TRUST-05's no-tuning rule is not in play. The value is stated in
+            # the record.
+            - "--kv-cache-size=64"
+            # Fixed so two runs hash blocks identically. The router recomputes
+            # keys from the event's token_ids, so this seed need not match
+            # anything on the router side; it is pinned for reproducibility only.
+            - "--hash-seed=313"
+            # Fixed RNG seed: the default is the current time in nanoseconds,
+            # which would make the response bank non-reproducible across runs.
+            - "--seed=313"
+            # Flush every event immediately instead of bundling up to 16 or
+            # waiting out the 1s timer. Observability only — it changes when the
+            # record can SEE an event, not whether the router receives it.
+            - "--event-batch-size=1"
+            # The simulator DIALS this address; the router BINDS it.
+            - "--zmq-endpoint=tcp://sim-router-epp:5557"
+            - "--v=4"
+          env:
+            # Mandatory with --enable-kvcache: POD_IP is embedded in the ZMQ
+            # topic (kv@<POD_IP>:<port>@<model>) and is how a subscriber knows
+            # WHICH pod holds the block. Without it the simulator refuses to
+            # start. It is also exactly the <Address>:<Port> form the router's
+            # scorer uses to address pods, which is what makes the join possible.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            # No memory limit, for the same reason as render.yaml: an OOM kill
+            # would destroy the measurement rather than record it (D-14).
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+          volumeMounts:
+            - name: latency-profile
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: latency-profile
+          configMap:
+            name: sim-latency-profile
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sim
+  labels:
+    app: sim
+    lab: sim-router
+spec:
+  # Headless: the router addresses individual Pod IPs (it is an endpoint picker,
+  # so a load-balancing ClusterIP in front of the fleet would defeat the entire
+  # mechanism). The Service exists for DNS and for reading per-pod metrics, never
+  # as the data path.
+  clusterIP: None
+  selector:
+    app: sim
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

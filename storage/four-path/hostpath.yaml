@@ -1,0 +1,84 @@
+# four-path storage harness — the `hostpath` path
+#
+# A hostPath Pod volume pointed at the node's `extraMounts` bind mount, so the
+# payload lands on the host filesystem with NO CSI layer and NO container
+# overlay in between. This is the control in the four-path comparison: it is
+# the shortest route from a Pod to the disk that Kubernetes offers, so every
+# other path's figure is readable as overhead relative to it.
+#
+# `extraMounts` is CREATE-TIME-ONLY — it is an argument to `docker run` for the
+# node container, so it exists only if it was declared when the node was
+# created. The entry lives in labs/clusters/spike-core/create.sh; run.sh
+# hard-fails before measuring anything if __HOSTPATH_NODE__ is not present
+# inside the node, rather than silently measuring a directory on the node's
+# overlay filesystem and reporting it as a host-disk figure.
+#
+# The host side is deliberately under /var/lib and not /tmp or /: on the
+# Rancher Desktop VM `/` is tmpfs (RAM) while /var/lib, /var/lib/docker,
+# /mnt/data and /tmp are all /dev/vda1 ext4. A path that landed on tmpfs would
+# report RAM speed as disk speed.
+#
+# Placeholders substituted by run.sh: __CLIENT_IMAGE__, __WORKER_NODE__,
+# __HOSTPATH_NODE__, __PAYLOAD_LIMIT__, __CLIENT_MEM_LIMIT__.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-hostpath
+  labels:
+    spike: spike-02
+    path: hostpath
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: client-hostpath
+  template:
+    metadata:
+      labels:
+        app: client-hostpath
+        spike: spike-02
+        path: hostpath
+    spec:
+      # Mandatory here, not merely tidy: the extraMount exists on exactly one
+      # node, so a Pod scheduled anywhere else would get an empty
+      # DirectoryOrCreate on that node's overlay filesystem instead.
+      nodeSelector:
+        kubernetes.io/hostname: __WORKER_NODE__
+      containers:
+        - name: client
+          image: __CLIENT_IMAGE__
+          command: ["sleep", "infinity"]
+          volumeMounts:
+            - name: probe
+              mountPath: /probe
+            - name: payload
+              mountPath: /payload
+            - name: target
+              mountPath: /target
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: __CLIENT_MEM_LIMIT__
+      volumes:
+        - name: probe
+          configMap:
+            name: spike-02-probe
+        - name: payload
+          emptyDir:
+            medium: Memory
+            sizeLimit: __PAYLOAD_LIMIT__
+        - name: target
+          hostPath:
+            # The node-side containerPath of the extraMounts bind. `Directory`
+            # and not `DirectoryOrCreate` on purpose: DirectoryOrCreate would
+            # happily create an empty directory on the node's overlay
+            # filesystem if the bind mount were missing, and the harness would
+            # then publish an overlay figure as a host-disk figure. Failing to
+            # start is the correct behaviour.
+            path: __HOSTPATH_NODE__
+            type: Directory

@@ -1,0 +1,104 @@
+# four-path storage harness — the `pvc` path
+#
+# A plain PVC on kind's DEFAULT StorageClass, which is `standard`, backed by
+# `rancher.io/local-path`. The local-path provisioner is not a network CSI
+# driver: it creates a directory under /var/local-path-provisioner INSIDE the
+# node container and bind-mounts it into the Pod. So this path measures
+# "PVC through the default provisioner, on the node's overlay2 filesystem",
+# and the pvc-vs-hostpath delta is the cost of the provisioner's bind plus the
+# container overlay rather than the cost of two different disks.
+#
+# volumeBindingMode on `standard` is WaitForFirstConsumer, so the PV does not
+# exist until the client Pod is scheduled — which is why the client is pinned
+# to the worker explicitly and not left to chance.
+#
+# Placeholders substituted by run.sh: __CLIENT_IMAGE__, __WORKER_NODE__,
+# __PAYLOAD_LIMIT__, __CLIENT_MEM_LIMIT__.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spike02-pvc
+  labels:
+    spike: spike-02
+    path: pvc
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-pvc
+  labels:
+    spike: spike-02
+    path: pvc
+spec:
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate: the target PVC is ReadWriteOnce, so a
+    # second Pod would sit Pending on the volume and the probe would exec into
+    # the wrong one.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: client-pvc
+  template:
+    metadata:
+      labels:
+        app: client-pvc
+        spike: spike-02
+        path: pvc
+    spec:
+      # Every client Pod in this harness is pinned to the SAME node. Four
+      # figures measured on two different nodes would not be comparable, and
+      # the hostpath path can only run on the node carrying the extraMount.
+      nodeSelector:
+        kubernetes.io/hostname: __WORKER_NODE__
+      containers:
+        - name: client
+          image: __CLIENT_IMAGE__
+          command: ["sleep", "infinity"]
+          volumeMounts:
+            - name: probe
+              mountPath: /probe
+            - name: payload
+              mountPath: /payload
+            - name: target
+              mountPath: /target
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              # DERIVED from SIZE_MB, not a constant: the tmpfs payload is
+              # charged to this container's memory cgroup AND so is the page
+              # cache of the file being written. A limit that forces reclaim
+              # mid-write would be measuring cgroup reclaim, not the storage
+              # path.
+              #
+              # It used to be a hardcoded 1Gi, reasoned for the default
+              # SIZE_MB=256 but not tracking it. At the documented
+              # `SIZE_MB=512` the memory-backed emptyDir alone is 576Mi
+              # (SIZE_MB+64) against a 1Gi ceiling, plus the page cache of the
+              # 512 MiB file — the exact reclaim pressure this limit was sized
+              # to avoid — so the probe was OOM-killed mid-write and the path
+              # reported `unmeasured`. run.sh substitutes SIZE_MB*3+256.
+              memory: __CLIENT_MEM_LIMIT__
+      volumes:
+        - name: probe
+          configMap:
+            name: spike-02-probe
+        - name: payload
+          emptyDir:
+            # medium: Memory -> tmpfs. The payload SOURCE must be RAM so that
+            # reading it inside a timed write costs RAM speed and the figure is
+            # dominated by the target path.
+            medium: Memory
+            sizeLimit: __PAYLOAD_LIMIT__
+        - name: target
+          persistentVolumeClaim:
+            claimName: spike02-pvc

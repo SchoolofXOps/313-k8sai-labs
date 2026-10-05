@@ -1,0 +1,363 @@
+# four-path storage harness — the `nfs` path (the RWX path)
+#
+# This is the path M6 and M7's checkpoint-resume depend on: ReadWriteMany, so
+# more than one Pod can hold the same volume at once. kind's default
+# `standard` StorageClass cannot do RWX at all, so something has to serve NFS.
+#
+# ## Why a USERSPACE NFS server
+#
+# Two things are needed to mount NFS in a Pod, and they are commonly confused:
+#
+#   1. a server. This one is upstream SIG-Storage's
+#      nfs-ganesha-server-and-external-provisioner — **NFS-Ganesha, a userspace
+#      server**. It does NOT need the VM kernel's `nfsd` module, which matters
+#      because `modprobe nfsd` inside the Rancher Desktop VM requires root on
+#      the VM and is not something a lab can assume.
+#   2. a CLIENT. That is the VM kernel's `nfs` module plus the userspace
+#      `/sbin/mount.nfs` helper, and the mount is performed by kubelet on the
+#      node, not by the Pod. Measured on this host: the pinned
+#      `kindest/node` image DOES ship /sbin/mount.nfs (and mount.nfs4), and the
+#      VM kernel DOES carry nfs.ko / nfsv3.ko / nfsv4.ko — but they are not
+#      loaded by default, and `modprobe` from an unprivileged `rdctl shell`
+#      fails with "Operation not permitted". Evidence:
+#      planning/lab-tests/raw/spike-02/probe-nfs-support.log
+#
+# So the harness documents `sudo modprobe nfs` in the VM as a prerequisite of
+# the NFS path, and run.sh records the module state into harness-config.md on
+# every run so a figure can never be read without knowing whether the client
+# module was present.
+#
+# ## What is measured
+#
+# client Pod -> kernel NFS client in the node -> Pod network -> Ganesha server
+# Pod -> its own PVC on `standard` -> node overlay2 -> /dev/vda1 ext4.
+#
+# The NFS server is DELIBERATELY backed by a PVC on the same `standard`
+# StorageClass the `pvc` path measures, so the nfs-vs-pvc delta is the NFS
+# protocol plus the userspace-Ganesha hop on top of the identical substrate,
+# and not two different disks. That layering is the whole point and it is
+# restated in harness-config.md's shared-disk caveat.
+#
+# Placeholders substituted by run.sh: __NFS_IMAGE__, __CLIENT_IMAGE__,
+# __WORKER_NODE__, __PAYLOAD_LIMIT__, __CLIENT_MEM_LIMIT__, __NAMESPACE__.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-provisioner
+  labels:
+    spike: spike-02
+    path: nfs
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spike02-nfs-provisioner-runner
+  labels:
+    spike: spike-02
+    path: nfs
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spike02-nfs-provisioner
+  labels:
+    spike: spike-02
+    path: nfs
+subjects:
+  - kind: ServiceAccount
+    name: nfs-provisioner
+    # Substituted by run.sh from NAMESPACE, which is an advertised knob. A
+    # ClusterRoleBinding subject REQUIRES an explicit namespace — `kubectl -n`
+    # cannot supply it — so hardcoding `spike-02` here meant that with
+    # NAMESPACE=anything-else this binding pointed at a ServiceAccount that
+    # does not exist: the provisioner silently got no `persistentvolumes`
+    # permission, spike02-nfs-rwx stayed Pending, client-nfs never rolled out,
+    # and the nfs path reported `unmeasured — no Running Pod` three layers
+    # away from the cause.
+    namespace: __NAMESPACE__
+roleRef:
+  kind: ClusterRole
+  name: spike02-nfs-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nfs-provisioner
+  labels:
+    spike: spike-02
+    path: nfs
+rules:
+  # Leader election for the provisioner, namespaced.
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nfs-provisioner
+  labels:
+    spike: spike-02
+    path: nfs
+subjects:
+  - kind: ServiceAccount
+    name: nfs-provisioner
+roleRef:
+  kind: Role
+  name: nfs-provisioner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spike02-nfs-backing
+  labels:
+    spike: spike-02
+    path: nfs
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-provisioner
+  labels:
+    spike: spike-02
+    path: nfs
+spec:
+  selector:
+    app: nfs-provisioner
+  ports:
+    - name: nfs
+      port: 2049
+    - name: nfs-udp
+      port: 2049
+      protocol: UDP
+    - name: nlockmgr
+      port: 32803
+    - name: nlockmgr-udp
+      port: 32803
+      protocol: UDP
+    - name: mountd
+      port: 20048
+    - name: mountd-udp
+      port: 20048
+      protocol: UDP
+    - name: rquotad
+      port: 875
+    - name: rquotad-udp
+      port: 875
+      protocol: UDP
+    - name: rpcbind
+      port: 111
+    - name: rpcbind-udp
+      port: 111
+      protocol: UDP
+    - name: statd
+      port: 662
+    - name: statd-udp
+      port: 662
+      protocol: UDP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-provisioner
+  labels:
+    spike: spike-02
+    path: nfs
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-provisioner
+  template:
+    metadata:
+      labels:
+        app: nfs-provisioner
+        spike: spike-02
+        path: nfs
+    spec:
+      serviceAccountName: nfs-provisioner
+      nodeSelector:
+        kubernetes.io/hostname: __WORKER_NODE__
+      containers:
+        - name: nfs-provisioner
+          image: __NFS_IMAGE__
+          ports:
+            - name: nfs
+              containerPort: 2049
+            - name: nfs-udp
+              containerPort: 2049
+              protocol: UDP
+            - name: nlockmgr
+              containerPort: 32803
+            - name: nlockmgr-udp
+              containerPort: 32803
+              protocol: UDP
+            - name: mountd
+              containerPort: 20048
+            - name: mountd-udp
+              containerPort: 20048
+              protocol: UDP
+            - name: rquotad
+              containerPort: 875
+            - name: rquotad-udp
+              containerPort: 875
+              protocol: UDP
+            - name: rpcbind
+              containerPort: 111
+            - name: rpcbind-udp
+              containerPort: 111
+              protocol: UDP
+            - name: statd
+              containerPort: 662
+            - name: statd-udp
+              containerPort: 662
+              protocol: UDP
+          securityContext:
+            capabilities:
+              # The two capabilities upstream documents for Ganesha: read any
+              # exported path regardless of DAC, and raise its own resource
+              # limits. Deliberately NOT `privileged: true` — a userspace
+              # server does not need the kernel.
+              add: ["DAC_READ_SEARCH", "SYS_RESOURCE"]
+          args:
+            # Must match the StorageClass's `provisioner` field exactly.
+            - "-provisioner=spike02.lab/nfs"
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SERVICE_NAME
+              # With SERVICE_NAME set, the PVs the provisioner creates name the
+              # Service's stable ClusterIP as the NFS server instead of the
+              # Pod IP, so a Pod restart does not strand the volume.
+              value: nfs-provisioner
+          volumeMounts:
+            - name: export-volume
+              mountPath: /export
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: export-volume
+          persistentVolumeClaim:
+            claimName: spike02-nfs-backing
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: spike02-nfs
+  labels:
+    spike: spike-02
+    path: nfs
+provisioner: spike02.lab/nfs
+reclaimPolicy: Delete
+mountOptions:
+  # NFSv4.1 — stated explicitly so the figure is attributable to a protocol
+  # version rather than to whatever the client negotiated that day.
+  - vers=4.1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spike02-nfs-rwx
+  labels:
+    spike: spike-02
+    path: nfs
+spec:
+  # ReadWriteMany — the property that none of the other three paths has, and
+  # the reason this path exists in the comparison at all.
+  accessModes: ["ReadWriteMany"]
+  storageClassName: spike02-nfs
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-nfs
+  labels:
+    spike: spike-02
+    path: nfs
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: client-nfs
+  template:
+    metadata:
+      labels:
+        app: client-nfs
+        spike: spike-02
+        path: nfs
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: __WORKER_NODE__
+      containers:
+        - name: client
+          image: __CLIENT_IMAGE__
+          command: ["sleep", "infinity"]
+          volumeMounts:
+            - name: probe
+              mountPath: /probe
+            - name: payload
+              mountPath: /payload
+            - name: target
+              mountPath: /target
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: __CLIENT_MEM_LIMIT__
+      volumes:
+        - name: probe
+          configMap:
+            name: spike-02-probe
+        - name: payload
+          emptyDir:
+            medium: Memory
+            sizeLimit: __PAYLOAD_LIMIT__
+        - name: target
+          persistentVolumeClaim:
+            claimName: spike02-nfs-rwx

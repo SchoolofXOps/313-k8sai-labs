@@ -1,0 +1,37 @@
+# labs/sandbox/runsc-node — the gVisor RuntimeClass
+#
+# Mechanism: a RuntimeClass is a cluster-scoped NAME that a Pod asks for with
+# spec.runtimeClassName. It carries no implementation. The kubelet hands
+# .handler to containerd, which looks it up among the runtime handlers in its
+# own config. If no handler by that name exists, behaviour depends on the
+# runtime's configuration -- and the failure a learner must be taught to expect
+# is the SILENT one: containerd serving the Pod with the default runtime while
+# the Pod reports Running exactly as it would have under runsc.
+#
+# So `handler: runsc` below must match, character for character, the handler
+# name registered in /etc/containerd/config.toml by
+# labs/sandbox/runsc-node/Dockerfile:
+#
+#   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+#                                                           ^^^^^
+#
+# and the only honest confirmation that it matched is read from INSIDE a Pod
+# (/proc/version reporting the gVisor sentry's kernel identity), never from the
+# node or the Pod's phase.
+#
+# API group note: RuntimeClass is STABLE on node.k8s.io/v1 -- it has been since
+# Kubernetes 1.20. It is not one of the gated beta APIs this course's
+# spike-core profile has to switch on, so no feature gate or --runtime-config
+# entry is involved here.
+#
+# Requires a node built from labs/sandbox/runsc-node/Dockerfile. Applying this
+# against a stock kind cluster creates the object successfully and every Pod
+# that uses it stays Pending or falls back -- the object's existence proves
+# nothing about the node.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runsc
+# The containerd runtime handler name. Must equal the stanza name the
+# Dockerfile appends to the node's containerd config.
+handler: runsc

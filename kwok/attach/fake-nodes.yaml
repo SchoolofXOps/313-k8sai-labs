@@ -1,0 +1,84 @@
+---
+# fake-nodes.yaml — the fake Node object kwok adopts, as a TEMPLATE
+#
+# This file is NOT applied directly. `setup.sh` renders it once per fake node,
+# substituting the __TOKEN__ placeholders, and pipes each rendering to
+# `kubectl apply -f -`. It is committed as a readable file rather than buried in
+# a heredoc because this object IS the mechanism: every field below is load
+# bearing, and Phase 3 (PLAT-03) inherits it.
+#
+# Placeholders rendered by setup.sh:
+#   __NODE_NAME__   kwok-node-<i>
+#   __ARCH__        normalised Kubernetes arch label (arm64 / amd64), never
+#                   hardcoded: plan 01-05's amd64 CI arm renders the same file
+#   __BLOCK__       Kueue TAS topology block this node sits in
+#   __RACK__        Kueue TAS topology rack this node sits in
+#   __CPU__         allocatable+capacity cpu
+#   __MEMORY__      allocatable+capacity memory
+#   __PODS__        allocatable+capacity pods
+#
+# The two topology label KEYS below are the defaults
+# (cloud.provider.com/topology-block / -rack). setup.sh rewrites the key
+# strings themselves when TOPOLOGY_BLOCK / TOPOLOGY_RACK are overridden, so
+# the committed file stays greppable with the keys the Kueue `Topology` object
+# in kueue-v1beta2.yaml actually references.
+#
+# These are SIMULATED nodes. They are not machines, they carry no kubelet, and
+# nothing attached to them is a GPU. The kwok controller fakes the kubelet for
+# them AFTER the real kube-scheduler has already chosen them.
+apiVersion: v1
+kind: Node
+metadata:
+  name: __NODE_NAME__
+  annotations:
+    # Suppresses the node-controller's TTL churn on a node nothing really
+    # heartbeats for. 304 carries this; kept verbatim.
+    node.alpha.kubernetes.io/ttl: "0"
+    # THE adoption annotation. This is what makes the kwok controller take
+    # ownership of this Node and run its lifecycle stages against it
+    # (node-initialize -> Ready, node-heartbeat-with-lease, pod-ready/
+    # complete/delete). WITHOUT it the Node object just sits there NotReady
+    # forever, because no kubelet will ever report for it.
+    kwok.x-k8s.io/node: fake
+  labels:
+    beta.kubernetes.io/arch: __ARCH__
+    beta.kubernetes.io/os: linux
+    kubernetes.io/arch: __ARCH__
+    kubernetes.io/hostname: __NODE_NAME__
+    kubernetes.io/os: linux
+    kubernetes.io/role: agent
+    node-role.kubernetes.io/agent: ""
+    # The selector the Kueue ResourceFlavor binds quota to, so quota lands on
+    # the simulated fleet and never on the real kind worker.
+    type: kwok
+    # Kueue Topology-Aware Scheduling levels. These exact keys are the
+    # `spec.levels[].nodeLabel` values in the `Topology` object in
+    # kueue-v1beta2.yaml; a mismatch here silently makes every TAS placement
+    # infeasible.
+    cloud.provider.com/topology-block: __BLOCK__
+    cloud.provider.com/topology-rack: __RACK__
+spec:
+  taints:
+    # THE taint that keeps the cluster honest. A real pod bound to a node with
+    # no kubelet never starts and never fails — it just hangs. Every fake node
+    # therefore repels anything that has not explicitly opted in. Kueue adds
+    # the matching toleration from the ResourceFlavor for workloads it admits
+    # into the simulated flavor.
+    - key: kwok.x-k8s.io/node
+      value: fake
+      effect: NoSchedule
+status:
+  allocatable:
+    cpu: "__CPU__"
+    memory: __MEMORY__
+    pods: "__PODS__"
+  capacity:
+    cpu: "__CPU__"
+    memory: __MEMORY__
+    pods: "__PODS__"
+  nodeInfo:
+    architecture: __ARCH__
+    # Deliberately the literal string `fake`: anyone reading `kubectl get nodes`
+    # sees immediately that this row is not a machine.
+    kubeletVersion: fake
+    operatingSystem: linux

@@ -1,0 +1,377 @@
+# sim-router — llm-d-router v0.11.0 Endpoint Picker, STANDALONE MODE
+#
+# Purpose: the routing brain. Subscribes to the simulators' ZMQ KV-cache events,
+# maintains a block index keyed by pod, and answers Envoy's ext-proc call with
+# the endpoint it chose.
+#
+# Standalone Mode, stated precisely — this is the claim this lab has to keep
+# honest:
+#
+#   There is NO Gateway API controller, NO Istio, NO Knative, and NO
+#   InferencePool CRD anywhere in this lab. The EPP's `--endpoint-selector` /
+#   `--endpoint-target-ports` pair is the CRD-free discovery path (upstream's
+#   `router.inferencePool.create: false` branch): the picker lists Pods by plain
+#   label selector through the Kubernetes API and needs no custom resource at
+#   all. The only RBAC it gets is get/watch/list on Pods in this namespace.
+#
+#   The Envoy that fronts it is supplied by envoy.yaml in this directory and
+#   managed by this lab, not by a gateway controller reconciling a Gateway
+#   object. That is what "self-managed Envoy" means and it is why the whole loop
+#   fits an 8 GB budget.
+#
+# ZMQ direction: this component BINDS the SUB socket (tcp://0.0.0.0:5557 in the
+# prefix-cache policy below) and the simulators DIAL it. The Service exposes
+# 5557 for exactly that.
+#
+# Three policies, one image, one Deployment: the EPP's whole routing behaviour is
+# the EndpointPickerConfig file it is pointed at, so the three policies this
+# spike compares are three keys in one ConfigMap and the live policy is the
+# POLICY env var. Switching policy is `kubectl set env` plus a rollout — it never
+# re-deploys the fleet, which is what makes the three measurements comparable:
+# the simulators are the same pods throughout.
+#
+# Image: ghcr.io/llm-d/llm-d-router-endpoint-picker v0.11.0, index digest
+# resolved by Spike 0. NOTE the repository name: the image is
+# `llm-d-router-endpoint-picker`, NOT `llm-d-router` — the latter returns 403.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sim-router-epp
+  labels:
+    lab: sim-router
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sim-router-epp
+  labels:
+    lab: sim-router
+rules:
+  # The ENTIRE permission set the CRD-free standalone path needs. Compare with
+  # the InferencePool path, which additionally wants get/watch/list on
+  # inference.networking.k8s.io inferencepools plus llm-d.ai inferenceobjectives
+  # and inferencemodelrewrites. None of those CRDs is installed here.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sim-router-epp
+  labels:
+    lab: sim-router
+subjects:
+  - kind: ServiceAccount
+    name: sim-router-epp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sim-router-epp
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sim-router-policies
+  labels:
+    lab: sim-router
+data:
+  # ---------------------------------------------------------------------------
+  # POLICY 1 — round-robin / random. THE CONTROL.
+  #
+  # No scorers at all. `random-picker` "selects endpoint(s) uniformly at random,
+  # ignoring any scores calculated by scorer plugins". Endpoint choice is
+  # therefore independent of cache residency AND of load — which is exactly what
+  # a control has to be. If policy 3's distribution is indistinguishable from
+  # this one, the prefix-cache scorer is doing nothing.
+  # ---------------------------------------------------------------------------
+  round-robin.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: EndpointPickerConfig
+    plugins:
+    - type: single-profile-handler
+    - type: random-picker
+    schedulingProfiles:
+    - name: default
+      plugins:
+      - pluginRef: random-picker
+
+  # ---------------------------------------------------------------------------
+  # POLICY 2 — load-aware.
+  #
+  # `load-aware-scorer` reads each pod's live WaitingQueueSize and scores
+  # [0, 0.5]: empty queue scores 0.5, queue depth at or past the threshold scores
+  # 0.0. That metric reaches the scorer through the data layer:
+  # metrics-data-source scrapes each sim's /metrics, core-metrics-extractor maps
+  # the vLLM metric names onto endpoint state. The simulator exposes the
+  # vLLM-compatible subset, which is what makes this work without a real vLLM.
+  #
+  # Distinguishing observable: endpoint choice tracks QUEUE DEPTH and is blind to
+  # which pod holds the prefix.
+  # ---------------------------------------------------------------------------
+  load-aware.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: EndpointPickerConfig
+    plugins:
+    - type: single-profile-handler
+    - type: metrics-data-source
+      parameters:
+        scheme: "http"
+        path: "/metrics"
+        insecureSkipVerify: true
+    - type: core-metrics-extractor
+    - type: load-aware-scorer
+    - type: max-score-picker
+    dataLayer:
+      sources:
+        - pluginRef: metrics-data-source
+          extractors:
+            - pluginRef: core-metrics-extractor
+    schedulingProfiles:
+    - name: default
+      plugins:
+      - pluginRef: load-aware-scorer
+        weight: 1.0
+      - pluginRef: max-score-picker
+
+  # ---------------------------------------------------------------------------
+  # POLICY 3 — prefix-cache-aware. THE ONE THIS SPIKE EXISTS FOR.
+  #
+  # The full precise pipeline, in dependency order:
+  #
+  #   token-producer              tokenizes the incoming prompt via the SHARED
+  #                               vLLM render service, publishing TokenizedPrompt.
+  #                               Backend `vllm`, not the default `estimate`
+  #                               byte-packing — see render.yaml for why the two
+  #                               sides must share one tokenizer or nothing ever
+  #                               correlates.
+  #
+  #   precise-prefix-cache-producer
+  #                               BINDS the ZMQ SUB socket, ingests BlockStored /
+  #                               BlockRemoved, recomputes block keys from each
+  #                               event's token_ids, and maintains the per-pod
+  #                               block index. Publishes PrefixCacheMatchInfo
+  #                               (matched blocks / total blocks) per endpoint.
+  #
+  #   prefix-cache-scorer         turns that into a [0,1] score per endpoint:
+  #                               matchBlocks / totalBlocks. Must name the
+  #                               producer explicitly — WITHOUT
+  #                               prefixMatchInfoProducerName the scorer silently
+  #                               falls back to an auto-spawned APPROXIMATE
+  #                               producer that never reads the ZMQ stream at
+  #                               all. That fallback would produce a
+  #                               plausible-looking lab that tests nothing, and
+  #                               is the single most dangerous
+  #                               misconfiguration available here.
+  #
+  #   max-score-picker            picks the highest scorer.
+  #
+  # Distinguishing observable: endpoint choice tracks ZMQ-REPORTED CACHE
+  # RESIDENCY for this request's prefix, and must FOLLOW that residency when it
+  # moves — which is what the eviction asymmetry tests.
+  #
+  # ZMQ SOCKET DIRECTION — the one thing in this lab that cannot be guessed, and
+  # whose error output actively misleads.
+  #
+  #   `zmqEndpoint: tcp://0.0.0.0:5557` is a BIND address. The producer's kvevents
+  #   pool LISTENS there, and llm-d-inference-sim's publisher DIALS it: the
+  #   simulator calls socket.Dial() unconditionally with
+  #   WithDialerMaxRetries(-1), so it only ever connects out and never listens.
+  #   (The simulator's own doc comment claims "endpoint is the ZMQ address to
+  #   bind to", which contradicts the code directly beneath it. Believe the code.)
+  #   This is the direction sim.yaml's --zmq-endpoint=tcp://sim-router-epp:5557
+  #   assumes, and it WORKS.
+  #
+  #   SEPARATELY, and confusingly, the EPP also maintains a PER-POD subscriber
+  #   that DIALS OUT to every discovered model server at tcp://<podIP>:5557,
+  #   expecting the server to be listening — which is correct for real vLLM,
+  #   whose KV-event publisher binds, and wrong for this simulator, which does
+  #   not. Those dials are refused forever, at ERROR severity, roughly one line
+  #   per pod per second:
+  #     ERROR zmq-subscriber "Failed to connect subscriber socket"
+  #           endpoint="tcp://10.244.1.10:5557" error="... connection refused"
+  #
+  #   THAT LOG LOOP IS BENIGN NOISE, NOT A FAILURE. It is the single most
+  #   expensive red herring in this lab: it reads like total breakdown while the
+  #   bound socket beside it is ingesting every event normally. Do not debug it,
+  #   and do not let a learner conclude the lab is broken. Measured live — see
+  #   planning/lab-tests/raw/spike-03/10-epp-zmq-dial-failure.log for the noise
+  #   and 11-epp-index-metrics-*.log for the index counters proving ingestion
+  #   was happening at the same time.
+  #
+  #   Never diagnose this path from its logs. Read the router's own index
+  #   counters on :9090 instead — kvcache_index_admissions_total,
+  #   kvcache_index_evictions_total, kvcache_index_lookup_hits_total. Those are
+  #   the ground truth for "did the scorer consume the events", and they are what
+  #   SPIKE-03's verdict rests on.
+  #
+  # There is deliberately no `dataLayer:` block: this policy mirrors upstream's
+  # deploy/config/sim-epp-kvcache-config.yaml, the config llm-d-router ships FOR
+  # THIS SIMULATOR, which carries none. Only the model name and render URL differ.
+  # ---------------------------------------------------------------------------
+  prefix-cache.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: EndpointPickerConfig
+    plugins:
+    - type: token-producer
+      parameters:
+        modelName: Qwen/Qwen2.5-1.5B-Instruct
+        vllm:
+          url: http://vllm-render:8082
+    - type: precise-prefix-cache-producer
+      parameters:
+        tokenProcessorConfig:
+          blockSizeTokens: 16
+        kvEventsConfig:
+          zmqEndpoint: tcp://0.0.0.0:5557
+        indexerConfig:
+          kvBlockIndexConfig:
+            enableMetrics: true
+            metricsLoggingInterval: 60000000000
+    - type: prefix-cache-scorer
+      parameters:
+        prefixMatchInfoProducerName: precise-prefix-cache-producer
+    - type: decode-filter
+    - type: max-score-picker
+    - type: single-profile-handler
+    schedulingProfiles:
+    - name: default
+      plugins:
+      - pluginRef: decode-filter
+      - pluginRef: max-score-picker
+      - pluginRef: prefix-cache-scorer
+        weight: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sim-router-epp
+  labels:
+    app: sim-router-epp
+    lab: sim-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sim-router-epp
+  template:
+    metadata:
+      labels:
+        app: sim-router-epp
+        lab: sim-router
+    spec:
+      serviceAccountName: sim-router-epp
+      containers:
+        - name: epp
+          image: ghcr.io/llm-d/llm-d-router-endpoint-picker@sha256:39257d24552d16d8f215d3de25cc734fd44af3b282b67032db01aff900c610cf
+          imagePullPolicy: IfNotPresent
+          args:
+            # --- CRD-free endpoint discovery (Standalone Mode) ----------------
+            - "--endpoint-selector=app=sim"
+            - "--endpoint-target-ports=8000"
+            # --- the live policy ---------------------------------------------
+            # Kubernetes expands $(POLICY) from the env below, so switching
+            # policy is `kubectl set env` + rollout — the simulator fleet is
+            # never touched, which is what keeps the three runs comparable.
+            - "--config-file=/config/$(POLICY).yaml"
+            # --- observability: this is the evidence channel -------------------
+            # Publishes the scheduler's PER-ENDPOINT SCORES into Envoy dynamic
+            # metadata under envoy.lb / x-gateway-destination-endpoint-scores.
+            # envoy.yaml logs that key, so each request's access-log line carries
+            # not just WHICH endpoint was chosen but what every endpoint SCORED.
+            # A changed choice plus changed scores is far stronger evidence than
+            # a changed choice alone.
+            - "--emit-endpoint-scores"
+            - "--zap-encoder=console"
+            - "--zap-log-level=4"
+            # Open metrics: no scrape credential for a local-only lab.
+            - "--metrics-endpoint-auth=false"
+          env:
+            - name: POLICY
+              # Default is the control, so a mis-set env can only ever UNDERSTATE
+              # the result. Defaulting to prefix-cache would risk reporting the
+              # prefix-cache policy's behaviour under another policy's label.
+              value: "round-robin"
+            # POD_NAME and POD_NAMESPACE are MANDATORY, not conveniences. The
+            # EPP derives its own GKNN (group/kind/namespace/name identity) from
+            # them during setup and exits non-zero if either is missing:
+            #   ERROR setup "Failed to extract GKNN"
+            #         error="failed to get environment variable POD_NAME"
+            # It is a CrashLoopBackOff with no hint that the cause is an absent
+            # downward-API field. Measured live; see
+            # planning/lab-tests/raw/spike-03/05-setup-attempt1.log.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: grpc-ext-proc
+              containerPort: 9002
+            - name: grpc-health
+              containerPort: 9003
+            - name: metrics
+              containerPort: 9090
+            - name: zmq-kv
+              # The SUB socket the simulators dial. Bound only under the
+              # prefix-cache policy; under the other two the simulators' dials
+              # simply never connect, which is harmless for a ZMQ PUB.
+              containerPort: 5557
+          livenessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "192Mi"
+          volumeMounts:
+            - name: policies
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: policies
+          configMap:
+            name: sim-router-policies
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sim-router-epp
+  labels:
+    app: sim-router-epp
+    lab: sim-router
+spec:
+  type: ClusterIP
+  selector:
+    app: sim-router-epp
+  ports:
+    - name: grpc-ext-proc
+      port: 9002
+      targetPort: 9002
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+    - name: zmq-kv
+      # The address sim.yaml dials as tcp://sim-router-epp:5557.
+      port: 5557
+      targetPort: 5557
+      protocol: TCP

@@ -1,0 +1,193 @@
+# four-path storage harness — the `s3` path (object storage)
+#
+# ## Why this file is called minio.yaml and does not run MinIO
+#
+# The four-path design named **MinIO** as the S3 stand-in: real S3 protocol,
+# real throughput on local disk. On 2026-10-05 the MinIO community container
+# image could not be pulled anonymously from any registry tried:
+#
+#   docker.io/minio/minio   Docker Hub's API returns {"message":"object not
+#                           found"} for the repository itself; a pull returns
+#                           `insufficient_scope: authorization failed`
+#   quay.io/minio/minio     401 Unauthorized / "Requires authentication"
+#   ghcr.io/minio/minio     403 Forbidden on the anonymous token request
+#
+# Evidence: planning/lab-tests/raw/spike-02/probe-minio-image-availability.log
+#
+# A lab whose image cannot be pulled is a broken lab. So this path runs
+# **SeaweedFS** — multi-arch (linux/amd64 + linux/arm64), digest-pinned, with a
+# real S3 API gateway — and the measured path is labelled `s3`, not `minio`.
+# Labelling a SeaweedFS figure as a MinIO figure is exactly the class of claim
+# the Lab Truth Contract forbids.
+#
+# The FILENAME is kept so the harness's file set still matches the four-path
+# design it implements, and so the substitution is impossible to miss: anyone
+# opening minio.yaml reads this header first. **This is a stack-pin finding
+# that needs founder sign-off, not a silent substitution** — CLAUDE.md § Part B
+# still names MinIO as the S3 stand-in for M6.
+#
+# ## What is measured
+#
+# client Pod -> HTTP/1.1 over the Pod network -> SeaweedFS S3 gateway -> filer
+# + volume store -> PVC on `standard` -> node overlay2 -> /dev/vda1 ext4.
+#
+# So the s3-vs-pvc delta is the cost of an S3 round trip (HTTP framing, Pod
+# networking, the gateway's own filer/volume indirection) on top of the very
+# same disk the `pvc` path writes to.
+#
+# ## Credentials
+#
+# None. The SeaweedFS S3 gateway is started with no S3 identity configuration,
+# which leaves it anonymous-access, so the probe signs nothing and no secret
+# exists to leak into a committed capture. That is a deliberate reduction of
+# threat T-01-02 (MinIO prints root credentials on first start; this server has
+# none to print) and it keeps the measurement free of SigV4 signing cost, which
+# would otherwise land inside the timed write.
+#
+# Placeholders substituted by run.sh: __S3_IMAGE__, __CLIENT_IMAGE__,
+# __WORKER_NODE__, __PAYLOAD_LIMIT__, __CLIENT_MEM_LIMIT__.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spike02-s3-data
+  labels:
+    spike: spike-02
+    path: s3
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3
+  labels:
+    spike: spike-02
+    path: s3
+spec:
+  selector:
+    app: s3-server
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: 8333
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3-server
+  labels:
+    spike: spike-02
+    path: s3
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: s3-server
+  template:
+    metadata:
+      labels:
+        app: s3-server
+        spike: spike-02
+        path: s3
+    spec:
+      # Same node as every client, so the s3 figure is not also measuring a
+      # cross-node hop that the other three paths never pay.
+      nodeSelector:
+        kubernetes.io/hostname: __WORKER_NODE__
+      containers:
+        - name: weed
+          image: __S3_IMAGE__
+          # `weed` is invoked directly rather than through the image's
+          # entrypoint script, so the exact server topology is visible here
+          # instead of being assembled by a shell wrapper. `server -s3` runs
+          # master + volume + filer + S3 gateway in one process, which is what
+          # keeps this path inside the 8 GB budget.
+          command: ["weed"]
+          args:
+            - "server"
+            - "-dir=/data"
+            - "-s3"
+            - "-s3.port=8333"
+            - "-ip=$(POD_IP)"
+            - "-ip.bind=0.0.0.0"
+            - "-master.volumeSizeLimitMB=4096"
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - name: s3
+              containerPort: 8333
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: 8333
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              memory: 1536Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: spike02-s3-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-s3
+  labels:
+    spike: spike-02
+    path: s3
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: client-s3
+  template:
+    metadata:
+      labels:
+        app: client-s3
+        spike: spike-02
+        path: s3
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: __WORKER_NODE__
+      containers:
+        - name: client
+          image: __CLIENT_IMAGE__
+          command: ["sleep", "infinity"]
+          volumeMounts:
+            - name: probe
+              mountPath: /probe
+            - name: payload
+              mountPath: /payload
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: __CLIENT_MEM_LIMIT__
+      volumes:
+        - name: probe
+          configMap:
+            name: spike-02-probe
+        - name: payload
+          emptyDir:
+            medium: Memory
+            sizeLimit: __PAYLOAD_LIMIT__

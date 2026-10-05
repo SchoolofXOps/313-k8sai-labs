@@ -1,0 +1,50 @@
+# labs/sandbox/agent-sandbox — a Sandbox placed under the gVisor runtime
+#
+# Mechanism: spec.podTemplate is a real Kubernetes PodSpec, so it carries
+# runtimeClassName like any other Pod. That single field is the seam this whole
+# spike exists to prove: the Agent Sandbox API does not know gVisor exists, and
+# the gVisor RuntimeClass does not know Agent Sandbox exists. The platform
+# engineer joins them -- which is the course's thesis in miniature, and the
+# reason M11 teaches the two components together rather than separately.
+#
+# API group: agents.x-k8s.io/v1beta1. This is the ONLY version the v1.0.5 CRD
+# serves. v1alpha1 and its conversion webhooks were REMOVED at v1.0.0, so a
+# manifest copied from a 2025-era blog post or example is rejected outright by
+# the API server rather than converted -- there is no longer anything to
+# convert it with. Verified against the pinned release manifest's CRD in
+# planning/lab-tests/raw/spike-01/arm64/05-agent-sandbox-manifest-inspect.log
+#
+# What this object proves and what it does not: that a Sandbox CAN be scheduled
+# under runsc, confirmed by reading the sandbox kernel identity from INSIDE the
+# resulting workload. It does not establish that the sandbox is secure -- see
+# planning/lab-tests/spike-01-gvisor.md, "What the probe does not establish".
+#
+# Requires: labs/sandbox/agent-sandbox/install.sh (controller + CRD) and a
+# cluster whose nodes were built from labs/sandbox/runsc-node/Dockerfile. On a
+# stock node this object is created successfully and its Pod never runs under
+# gVisor, which is why the identity is read from inside and never inferred.
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: runsc-sandbox
+spec:
+  podTemplate:
+    spec:
+      # The seam. Must match the RuntimeClass name in
+      # labs/sandbox/runsc-node/runtimeclass.yaml, which must in turn match the
+      # containerd handler the node image registers.
+      runtimeClassName: runsc
+      containers:
+        - name: agent
+          # busybox, pinned by the index digest resolved live on 2026-10-05.
+          # Deliberately not an agent framework image: this phase proves the
+          # RUNTIME placement path, and the tooling layer above it is Phase 5's
+          # M11 content with course 314 named as the scope beyond it.
+          image: busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
