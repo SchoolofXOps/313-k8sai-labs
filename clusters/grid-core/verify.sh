@@ -36,7 +36,7 @@ set -euo pipefail
 # (v0.32.0) and ~/.rd/bin/kubectl shims resolve FIRST from a login shell, so
 # this script prepends the brew prefix itself instead of trusting the caller's
 # PATH. Override with LAB_BIN_PREFIX.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

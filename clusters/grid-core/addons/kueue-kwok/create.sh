@@ -145,7 +145,7 @@ set -euo pipefail
 # guarantee — the preflight below runs `kind get clusters`, and the stale v0.32.0
 # on this host would answer for a different cluster — so the version assert is
 # sourced rather than re-implemented.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

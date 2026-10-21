@@ -69,7 +69,7 @@ set -euo pipefail
 # /usr/local/bin/kind (v0.32.0) and ~/.rd/bin/kubectl resolve FIRST from a login
 # shell. An `export PATH` only lives as long as the shell that ran it, so this
 # script prepends the brew prefix itself rather than trusting the caller.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

@@ -87,7 +87,7 @@ OUT_DIR="${OUT_DIR:-/tmp/313-grid-sandbox-node-oci}"
 # toolchain resolves first from a login shell because /usr/local/bin and
 # ~/.rd/bin both precede the brew prefix. An `export PATH` only lives as long
 # as the shell that set it, so each script resolves its own binaries.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

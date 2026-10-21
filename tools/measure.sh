@@ -90,7 +90,7 @@ set -euo pipefail
 # surface. This script needs only docker, rdctl and python3; on this host there
 # is exactly one docker (~/.rd/bin/docker) and one rdctl, so the prepend cannot
 # change which of those resolves. Override with LAB_BIN_PREFIX.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

@@ -73,7 +73,7 @@ set -euo pipefail
 # --- pinned-binary resolution -------------------------------------------------
 # See create.sh for the full note. Short version: the stale /usr/local/bin/kind
 # (v0.32.0) and ~/.rd/bin/kubectl shims resolve FIRST from a login shell.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

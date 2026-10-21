@@ -52,7 +52,7 @@ set -euo pipefail
 # Identical story to the cluster profiles: on this build host a stale kind and a
 # stale kubectl resolve FIRST from a login shell, and an `export PATH` does not
 # survive past the shell that ran it. Resolve here rather than trusting PATH.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

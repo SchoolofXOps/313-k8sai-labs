@@ -47,7 +47,7 @@ set -euo pipefail
 
 # --- pinned-binary resolution -------------------------------------------------
 # PATH prepend only. See the header: no version assert.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

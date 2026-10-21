@@ -56,7 +56,7 @@ set -euo pipefail
 # that was not hypothetical: ~/.local/bin/kubectl is v1.37.0 while
 # /opt/homebrew/bin/kubectl is v1.36.2, so this script ran against a different
 # client than verify.sh did.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

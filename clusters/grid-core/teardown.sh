@@ -30,7 +30,7 @@ set -euo pipefail
 # See create.sh. No version assert here on purpose: deleting a cluster works
 # with either kind build, and a teardown must never be the thing that refuses
 # to run. Override with LAB_BIN_PREFIX.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 

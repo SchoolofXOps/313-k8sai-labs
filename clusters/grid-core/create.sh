@@ -61,7 +61,7 @@ set -euo pipefail
 # pinned binary ITSELF rather than trusting the caller's PATH — an
 # `export PATH` only lives as long as the shell that ran it, and it is not
 # something a learner on a clean machine has. Override with LAB_BIN_PREFIX.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 
@@ -70,6 +70,21 @@ export PATH
 # version comparison is a second thing that can be right while the first one is
 # wrong. labs/tools/size-gate.sh is the single place SIZE is validated and the
 # single place the skip token is emitted, for the same reason.
+#
+# WHICH ASSERTIONS THIS SCRIPT CALLS, AND WHY NOT ALL THREE. pinned-bin.sh
+# defines three — kind, kubectl and helm — and this script calls two. That is
+# deliberate and not an omission: creating the cluster does not invoke helm, so
+# asserting helm here would refuse to build a cluster over a tool the build
+# does not use. assert_helm_version is called by the three addon layers that
+# DO invoke helm (addons/dra, addons/ops, addons/kueue-kwok), each immediately
+# before it pulls or renders a chart.
+#
+# Stated explicitly because the sentence above is easy to over-read: "the
+# single place a tool pin is ASSERTED" is a claim about where the assertions
+# LIVE, not a claim that every script runs all of them. Until 2026-10-21 that
+# distinction hid a real gap — helm's pin was asserted in no script anywhere,
+# and this comment read as though it were covered. See
+# planning/lab-tests/03-setup-learner-qa.md § "Finding 4's gap".
 LABS_TOOLS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../tools" && pwd)"
 . "${LABS_TOOLS}/pinned-bin.sh"
 . "${LABS_TOOLS}/size-gate.sh"

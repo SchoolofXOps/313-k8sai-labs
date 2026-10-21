@@ -80,7 +80,7 @@ set -euo pipefail
 # login shell, and an `export PATH` only lives as long as the shell that ran
 # it. So the script resolves the pinned binaries itself. Override with
 # LAB_BIN_PREFIX.
-LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-/opt/homebrew/bin}"
+LAB_BIN_PREFIX="${LAB_BIN_PREFIX:-${HOME}/.local/bin}"
 PATH="${LAB_BIN_PREFIX}:${PATH}"
 export PATH
 
