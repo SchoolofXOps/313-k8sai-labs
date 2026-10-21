@@ -5,11 +5,18 @@
 #
 # Why this file exists
 # -------------------
-# Every labs/ script prepends LAB_BIN_PREFIX (default ${HOME}/.local/bin, the prefix the setup page installs into) to
-# PATH, but a prepend is NOT a resolution guarantee. If the pinned copy is
-# absent from that prefix — a Linux learner, or a Mac carrying kind only in
-# /usr/local/bin — the prepend is a no-op and whatever is next on PATH runs
-# instead. On the build host the shadowing copies are real:
+# Every labs/ script prepends LAB_BIN_PREFIX to PATH before it does anything
+# else. It defaults to ${HOME}/.local/bin — the prefix the setup page tells the
+# learner to install into, so that following the page and then losing the
+# export leaves the scripts looking in the right place anyway (ruled
+# 2026-10-21; the default used to be /opt/homebrew/bin, which agreed with
+# nothing the page said).
+#
+# A prepend is NOT a resolution guarantee, though, which is the whole reason
+# the assertions below exist. If the pinned copy is absent from that prefix —
+# a Linux learner, or a Mac carrying kind only in /usr/local/bin — the prepend
+# is a no-op and whatever is next on PATH runs instead. On the build host the
+# shadowing copies are real:
 #
 #   /usr/local/bin/kind      v0.32.0   shadows /opt/homebrew/bin/kind v0.33.0
 #   ~/.rd/bin/kubectl        a version-switching Rancher Desktop shim
@@ -118,8 +125,14 @@ assert_kind_version() {
   if [ "${got}" != "${PINNED_KIND_VERSION}" ]; then
     echo "FAIL: kind resolves to '${got:-<not found>}' but this course pins v${PINNED_KIND_VERSION}," >&2
     echo "      the only kind release carrying Kubernetes 1.37 node images." >&2
-    echo "      Install it and make sure it resolves first:" >&2
-    echo "        brew install kind     # then: LAB_BIN_PREFIX=\$(brew --prefix)/bin bash <script>" >&2
+    echo "      Install it and make sure it resolves first. The setup page's install" >&2
+    echo "      block fetches exactly this version, checksums it, and puts it in" >&2
+    echo "      ${HOME}/.local/bin — which is what this script looks in by default." >&2
+    echo "      Already have it elsewhere? Point the script at that directory:" >&2
+    echo "        LAB_BIN_PREFIX=/path/to/that/dir bash <script>" >&2
+    echo "      NOTE: 'brew install kind' is NOT a shortcut here — it installs the" >&2
+    echo "      LATEST kind, and this pin is EXACT, so brew will disagree with it the" >&2
+    echo "      day a new kind ships. Use it only if it gives you v${PINNED_KIND_VERSION}." >&2
     echo "      Resolution order on this host: $(type -a kind 2>/dev/null | tr '\n' ' ')" >&2
     exit 1
   fi
@@ -208,7 +221,11 @@ assert_helm_version() {
     echo "FAIL: helm not found, or 'helm version --short' produced nothing." >&2
     echo "      Every addon layer in this course pulls its chart from an OCI registry" >&2
     echo "      and renders it with 'helm template', so no layer can run without it." >&2
-    echo "      Install helm ${PINNED_HELM_MIN_MAJOR}.${PINNED_HELM_MIN_MINOR} or newer:" >&2
+    echo "      Install helm ${PINNED_HELM_MIN_MAJOR}.${PINNED_HELM_MIN_MINOR} or newer. The setup page's install" >&2
+    echo "      block fetches a measured helm, checksums it, and puts it in" >&2
+    echo "      ${HOME}/.local/bin — which is what this script looks in by default." >&2
+    echo "      Unlike kind, this pin is a FLOOR rather than an exact version, so on" >&2
+    echo "      macOS 'brew install helm' is also a fine answer:" >&2
     echo "        brew install helm     # then: LAB_BIN_PREFIX=\$(brew --prefix)/bin bash <script>" >&2
     echo "      Resolution order on this host: $(type -a helm 2>/dev/null | tr '\n' ' ')" >&2
     exit 1
@@ -232,7 +249,11 @@ assert_helm_version() {
     echo "      helm below that cannot fetch the chart at all." >&2
     echo "      Both helm 3 and helm 4 are accepted above the floor: v3.22.0 and v4.2.3" >&2
     echo "      were measured rendering every chart in this course identically." >&2
-    echo "      Install helm ${PINNED_HELM_MIN_MAJOR}.${PINNED_HELM_MIN_MINOR} or newer:" >&2
+    echo "      Install helm ${PINNED_HELM_MIN_MAJOR}.${PINNED_HELM_MIN_MINOR} or newer. The setup page's install" >&2
+    echo "      block fetches a measured helm, checksums it, and puts it in" >&2
+    echo "      ${HOME}/.local/bin — which is what this script looks in by default." >&2
+    echo "      Unlike kind, this pin is a FLOOR rather than an exact version, so on" >&2
+    echo "      macOS 'brew install helm' is also a fine answer:" >&2
     echo "        brew install helm     # then: LAB_BIN_PREFIX=\$(brew --prefix)/bin bash <script>" >&2
     echo "      Resolution order on this host: $(type -a helm 2>/dev/null | tr '\n' ' ')" >&2
     exit 1
