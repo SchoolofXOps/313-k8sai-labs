@@ -1,0 +1,140 @@
+{
+  "_why": "PLAT-02, PLAT-04. An ADDON LAYER's checks file. It lives beside the layer's script triple at labs/clusters/grid-core/addons/kueue-kwok/checks.json, not at labs/mN/checks.json — that second path is the MODULE checks path C1 and C6 read for truth_contract, and a layer is not a module, so this file carries no Truth Contract tag at all. EVERY ENTRY ASSERTS OBJECT STATE AND NONE ASSERTS A PERFORMANCE NUMBER: a throughput or latency figure asserted by a learner's own checks file fails on a slower laptop and teaches the learner that the course is wrong. NO ENTRY ASSERTS A POD PHASE either — a Running phase proves nothing about admission, and Kueue can admit nothing at all while every pod on the cluster is Running, which is why the admission entries read .status.admission and the refusal entry reads the QuotaReserved reason. THE FLEET IS SIMULATED: those nodes are plain Node objects with no kubelet, they are not machines, and nothing on them is a GPU; the quota being accounted is plain cpu plus one quota resource name standing for SYNTHETIC devices. NEVER A BARE `kubectl get workloads`: grid-core enables the GenericWorkload gate and serves the core scheduling group, so two resources answer to that plural name and THE BARE ONE RESOLVES TO THE CORE API — measured in SPIKE-04, where it returned nothing at all while three Kueue Workloads existed, which is a silent wrong answer that reads as a clean cluster. Every entry below uses the fully-qualified workloads.kueue.x-k8s.io. WHY `matches` AND NOT `absent` OR `contains` for the aggregate entries: the runner merges stderr into stdout, so an `absent` entry passes when a command ERRORS; and a `matches` anchored with ^ and $ over a jq-computed summary line is the only form that also FAILS OVER AN EMPTY COLLECTION — `every simulated node is Ready` across zero nodes is vacuously true, and a checks file that passes on an un-applied layer is this phase's named failure mode. The fleet entry uses a BACKREFERENCE for exactly that reason: 0/0 cannot satisfy it. EVERY kubectl RUN SETS KUBECONFIG ITSELF, measured on the base profile: create.sh exports KUBECONFIG=/tmp/grid-core.kubeconfig, but an export inside a script dies with the script, so the learner's own shell has no context and a bare `kubectl --context kind-grid-core` fails with `context was not found`. THE EXPECTED FLEET SIZE IS READ FROM course.config.json rather than written here, because lab.sizes.<SIZE>.kwok_collision_nodes is the single source for it and a literal in this file would be a second authority. TWO ENTRIES NEED NO CLUSTER — the committed values file and the committed rendered manifest — which is deliberate: they are the artifacts plan 03-07's checkers take as their subjects.",
+  "checks": [
+    {
+      "id": "live-config-is-v1beta2-and-maps-the-dra-device-class",
+      "describe": "SC2's positive half, on the LIVE object: the Kueue Configuration in the kueue-manager-config ConfigMap is in group config.kueue.x-k8s.io/v1beta2 AND at least one deviceClassMappings entry lists the DeviceClass the DRA layer creates. The group alone is the easy half — a stock chart install has the right group and no mapping at all, and without the mapping DRA devices are admitted UNCOUNTED. Read with kueue-config-probe.mjs, which RESOLVES the document: a line counter counts the nested deviceClassNames item and reports a count that is off by one, and a substring test for the DeviceClass name is satisfied by the name appearing in a comment",
+      "weight": 3,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && D=labs/clusters/grid-core/addons/kueue-kwok && N=$(sed -n 's/^driverName:[[:space:]]*\\([^[:space:]#]\\{1,\\}\\).*$/\\1/p' labs/clusters/grid-core/addons/dra/values.yaml | head -1) && T=$(mktemp) && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kueue-system get cm kueue-manager-config -o jsonpath='{.data.controller_manager_config\\.yaml}' > \"$T\" && node \"$D/kueue-config-probe.mjs\" \"$T\" \"$N\"; rm -f \"$T\"",
+      "assert": {
+        "matches": "^config_group=config\\.kueue\\.x-k8s\\.io/v1beta2 mappings=[1-9][0-9]* maps_deviceclass=yes quota_resources=example\\.com/sim-accelerator$"
+      }
+    },
+    {
+      "id": "committed-values-carry-the-same-mapping",
+      "describe": "the same assertion over the COMMITTED artifact, and one of the two entries here that needs no cluster. kueue-values.yaml is the checkable file: it carries the Configuration as a nested string at managerConfig.controllerManagerConfigYaml, which the probe unwraps. This is the subject plan 03-07's C18 checker takes, which is why C18 lands after this plan rather than before it — a positive-presence checker with zero subjects is green for the wrong reason",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && N=$(sed -n 's/^driverName:[[:space:]]*\\([^[:space:]#]\\{1,\\}\\).*$/\\1/p' labs/clusters/grid-core/addons/dra/values.yaml | head -1) && node labs/clusters/grid-core/addons/kueue-kwok/kueue-config-probe.mjs labs/clusters/grid-core/addons/kueue-kwok/kueue-values.yaml \"$N\"",
+      "assert": {
+        "matches": "^config_group=config\\.kueue\\.x-k8s\\.io/v1beta2 mappings=[1-9][0-9]* maps_deviceclass=yes quota_resources=example\\.com/sim-accelerator$"
+      }
+    },
+    {
+      "id": "kueue-crd-serves-only-the-current-api-group",
+      "describe": "the served versions of the ClusterQueue CRD, read from the API server itself. v0.20.0 serves exactly one version and the superseded one is gone — CLAUDE.md names that superseded group as the single most likely source of a broken lab in this course, and this is the live proof rather than a release note. Asserting the SET of served versions is stronger than asserting the current one is present: a cluster still serving both would fail here",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get crd clusterqueues.kueue.x-k8s.io -o json | jq -r '\"served=\" + ([.spec.versions[] | select(.served) | .name] | sort | join(\",\"))'",
+      "assert": {
+        "matches": "^served=v1beta2$"
+      }
+    },
+    {
+      "id": "simulated-fleet-is-the-declared-size-and-every-node-ready",
+      "describe": "the simulated node count equals the fleet size course.config.json declares for this SIZE and FLEET, and every one of those nodes reports Ready. Printed as ready/total expected=N and asserted with a BACKREFERENCE, so a cluster with zero simulated nodes cannot satisfy it and neither can a fleet of the wrong size. It honours the SAME knobs the scripts do — FLEET selects kwok_collision_nodes or kwok_scale_nodes, and FAKE_NODES overrides both — because an entry that only ever expected the collision size would go red against a correctly-built scale fleet, and a check that is wrong in a supported configuration teaches the learner that the course is wrong. The size matters beyond bookkeeping: a fleet of a different shape does not break the quota experiment, it INVERTS which constraint binds, and nothing in the output says so",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && N=$(node -e 'const c=require(\"./course.config.json\");const f=process.env.FLEET||\"collision\";const k=(f===\"scale\")?\"kwok_scale_nodes\":\"kwok_collision_nodes\";process.stdout.write(String(c.lab.sizes[process.env.SIZE||\"8\"][k]))') && N=\"${FAKE_NODES:-$N}\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get nodes -l type=kwok -o json | jq -r --arg n \"$N\" '\"fleet=\" + ([.items[] | select(any(.status.conditions[]; .type==\"Ready\" and .status==\"True\"))] | length | tostring) + \"/\" + (.items | length | tostring) + \" expected=\" + $n'",
+      "assert": {
+        "matches": "^fleet=([1-9][0-9]*)/\\1 expected=\\1$"
+      }
+    },
+    {
+      "id": "the-rack-gang-is-admitted-with-its-quota-reserved",
+      "describe": "the rack-level gang's Kueue Workload reports a NON-NULL .status.admission naming its ClusterQueue, with the cpu its PodSet reserved. Admission is the decision; a Pod phase is not, and the resourceUsage figure is quota accounting rather than a performance number. Printed as one line so an empty Workload list produces 'admitted=::' and fails. CONDITIONAL on the layer's TAS gang set being applied: create.sh applies it by default, and TAS_GANGS=none omits it because the three-tenant collision needs a fleet with no other admitted workloads. The run prints a fixed TAS-GANGS: not applied token and the assert carries the alternation — the same idiom labs/tools/size-gate.sh uses, with the alternation visible here on purpose. The entry below refuses the case where BOTH experiment sets are absent, so a cluster with neither cannot pass by skipping everything",
+      "weight": 2,
+      "run": "if ! KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get clusterqueue.kueue.x-k8s.io kueue-kwok-cq >/dev/null 2>&1; then echo \"TAS-GANGS: not applied (re-run create.sh without TAS_GANGS=none)\"; else KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kueue-kwok-tas get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .name==\"gang-rack\")) | select(.status.admission != null) | \"admitted=\" + .status.admission.clusterQueue + \":\" + (.status.admission.podSetAssignments[0].resourceUsage.cpu | tostring)] | first // \"admitted=none\"'; fi",
+      "assert": {
+        "matches": "^admitted=kueue-kwok-cq:6$|^TAS-GANGS: not applied"
+      }
+    },
+    {
+      "id": "the-negative-control-is-refused-by-topology-and-for-that-reason",
+      "describe": "the oversized rack-level gang has a NULL .status.admission AND its QuotaReserved condition reason is TopologyPlacementFailed. Both halves, because a gang refused for QUOTA has an identically null admission and would satisfy a check that only asserted the refusal — which is exactly how a fleet of the wrong size silently invalidates this experiment. The refusal is read from object state and never from a Pod phase: the Job stays suspended and there is no pod to have one. A cooperative fake cannot produce this asymmetry, which is why the admission entry above means anything. CONDITIONAL on the layer's TAS gang set being applied: create.sh applies it by default, and TAS_GANGS=none omits it because the three-tenant collision needs a fleet with no other admitted workloads. The run prints a fixed TAS-GANGS: not applied token and the assert carries the alternation — the same idiom labs/tools/size-gate.sh uses, with the alternation visible here on purpose. The entry below refuses the case where BOTH experiment sets are absent, so a cluster with neither cannot pass by skipping everything",
+      "weight": 3,
+      "run": "if ! KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get clusterqueue.kueue.x-k8s.io kueue-kwok-cq >/dev/null 2>&1; then echo \"TAS-GANGS: not applied (re-run create.sh without TAS_GANGS=none)\"; else KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kueue-kwok-tas get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .name==\"gang-rack-oversized\")) | \"refused=\" + (if .status.admission == null then \"null-admission\" else \"ADMITTED\" end) + \":\" + ([.status.conditions[]? | select(.type==\"QuotaReserved\") | .reason] | first // \"noreason\")] | first // \"refused=absent\"'; fi",
+      "assert": {
+        "matches": "^refused=null-admission:TopologyPlacementFailed$|^TAS-GANGS: not applied"
+      }
+    },
+    {
+      "id": "the-admitted-gang-stayed-inside-one-rack",
+      "describe": "where the gang ACTUALLY landed, joined through the node: every pod's .spec.nodeName is resolved against that node's own rack label and the DISTINCT rack values are counted. One rack is the whole claim of a rack-level required-topology request. Rack label values are globally unique across the fleet, so a gang that really spread across two blocks cannot report a single rack by coincidence. The pod count is printed in the same line and the assert requires it non-zero, because 'all of zero pods are in one rack' would otherwise pass — and the admission entry above is about the DECISION, while this one is about the BINDING the real kube-scheduler then performed. CONDITIONAL on the layer's TAS gang set being applied: create.sh applies it by default, and TAS_GANGS=none omits it because the three-tenant collision needs a fleet with no other admitted workloads. The run prints a fixed TAS-GANGS: not applied token and the assert carries the alternation — the same idiom labs/tools/size-gate.sh uses, with the alternation visible here on purpose. The entry below refuses the case where BOTH experiment sets are absent, so a cluster with neither cannot pass by skipping everything",
+      "weight": 2,
+      "run": "if ! KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get clusterqueue.kueue.x-k8s.io kueue-kwok-cq >/dev/null 2>&1; then echo \"TAS-GANGS: not applied (re-run create.sh without TAS_GANGS=none)\"; else T=$(mktemp) && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get nodes -o json > \"$T\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kueue-kwok-tas get pods -l batch.kubernetes.io/job-name=gang-rack -o json | jq -r --slurpfile nodes \"$T\" --arg k cloud.provider.com/topology-rack '[.items[].spec.nodeName | select(. != null)] as $pn | ($nodes[0].items | map({(.metadata.name): .metadata.labels[$k]}) | add) as $m | \"pods=\" + ($pn | length | tostring) + \" racks=\" + ([$pn[] | $m[.] | select(. != null)] | unique | length | tostring)'; rm -f \"$T\"; fi",
+      "assert": {
+        "matches": "^pods=[1-9][0-9]* racks=1$|^TAS-GANGS: not applied"
+      }
+    },
+    {
+      "id": "running-controller-is-on-the-pinned-digest",
+      "describe": "the imageID the kubelet actually resolved for the running Kueue controller carries the pinned manifest-list index digest. The rendered manifest proves what was ASKED FOR; this proves what RAN, which is the half a written-only pin cannot show. This pin is new in plan 03-03: the chart ships its controller image by TAG, and nothing in this project had resolved its index digest before",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kueue-system get pod -l control-plane=controller-manager -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'",
+      "assert": {
+        "contains": "@sha256:7c57f630b2987058cc543710aa4829cfd8119b7f7c23431cbc242b82cf4bce57"
+      }
+    },
+    {
+      "id": "committed-rendered-manifest-is-fully-digest-pinned",
+      "describe": "PLAT-01 over the layer's own artifact, and the second entry here that needs no cluster: every NON-EMPTY image: value in the committed kueue-rendered-pinned.yaml carries an @sha256 digest. Non-empty is the operative word — this chart renders eleven CRDs, and the Workload CRD's own OpenAPI schema contains `image:` property KEYS with no value, so a check that counted those would be measuring the CRD rather than the Deployment. It counts the references as well as the unpinned ones, so an empty or truncated render cannot satisfy it either",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && sed -n 's|^[[:space:]]*image:[[:space:]]*\"\\{0,1\\}\\([^\"[:space:]][^\"[:space:]]*\\)\"\\{0,1\\}[[:space:]]*$|\\1|p' labs/clusters/grid-core/addons/kueue-kwok/kueue-rendered-pinned.yaml | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
+      "assert": {
+        "matches": "^image_refs=[1-9][0-9]* unpinned=0$"
+      }
+    },
+    {
+      "id": "every-committed-kueue-object-is-on-the-current-api-group",
+      "describe": "PLAT-02 over the committed manifests, with no cluster: every apiVersion in this layer's Kueue manifests that is in the kueue group is on v1beta2. Parsed as a multi-document stream rather than grepped, because an apiVersion inside a comment is not an object and an object split across a line break is still an object. THE PARSER IS kubectl, offline: `kubectl patch --local --kubeconfig /dev/null` is sigs.k8s.io/yaml contacting no server, and it replaced a `require(\"js-yaml\")` that resolved ONLY where a node_modules happened to exist — js-yaml is a devDependency of the REPOSITORY ROOT, it failed on both CI arms on run 38488339140, and a learner cloning the public labs repository gets no package.json at all. kubectl is already a hard prerequisite of this layer, pinned at 1.37.x by labs/tools/pinned-bin.sh, so the parser is pinned with the toolchain and nothing new is installed. It counts the Kueue documents too, so a file that parsed to zero of them cannot satisfy it — which is the shape a truncated or renamed manifest would take",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && D=labs/clusters/grid-core/addons/kueue-kwok && kubectl patch --local --kubeconfig /dev/null --type=merge -p '{}' -o json -f \"$D/tas-gangs-v1beta2.yaml\" -f \"$D/three-tenant-v1beta2.yaml\" | jq -sr '[.[] | select((.apiVersion // \"\") | startswith(\"kueue.x-k8s.io/\"))] as $k | \"kueue_docs=\" + ($k|length|tostring) + \" wrong_group=\" + ([$k[] | select(.apiVersion != \"kueue.x-k8s.io/v1beta2\")] | length | tostring)'",
+      "assert": {
+        "matches": "^kueue_docs=[1-9][0-9]* wrong_group=0$"
+      }
+    },
+    {
+      "id": "three-tenants-share-one-cohort-with-equal-nominal-quota",
+      "describe": "the collision's precondition as object state: three ClusterQueues, all naming the SAME Cohort, all with the same cpu nominalQuota. Equal nominals are load-bearing rather than tidy — they are what makes the 'which tenant loses is not a specified order' statement in three-tenant-v1beta2.yaml true instead of rhetorical. Printed as one line so two queues, or two cohorts, or unequal nominals each fail distinguishably. These entries need the three-tenant manifest applied on top of the layer; they are the only entries here that do. CONDITIONAL: the run prints a fixed THREE-TENANT: not applied token and the assert carries the alternation, so the layer's checks stay green before the three-tenant manifest is applied — the same idiom labs/tools/size-gate.sh uses for size-conditional checks, and the alternation is visible in this file on purpose so a reader can see which checks are conditional and on what",
+      "weight": 2,
+      "run": "if ! KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get cohort.kueue.x-k8s.io grid-tenants >/dev/null 2>&1; then echo \"THREE-TENANT: not applied (kubectl apply -f labs/clusters/grid-core/addons/kueue-kwok/three-tenant-v1beta2.yaml)\"; else KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get clusterqueues.kueue.x-k8s.io -o json | jq -r '[.items[] | select(.spec.cohortName == \"grid-tenants\")] as $t | \"tenant_queues=\" + ($t | length | tostring) + \" cohorts=\" + ([$t[].spec.cohortName] | unique | length | tostring) + \" nominals=\" + ([$t[].spec.resourceGroups[0].flavors[0].resources[] | select(.name==\"cpu\") | .nominalQuota | tostring] | unique | join(\",\"))'; fi",
+      "assert": {
+        "matches": "^tenant_queues=3 cohorts=1 nominals=21$|^THREE-TENANT: not applied"
+      }
+    },
+    {
+      "id": "the-collision-was-reached-by-borrowing-and-stayed-inside-the-cohort",
+      "describe": "the two GUARANTEED borrowing properties, and deliberately not a third. (1) At least one tenant was admitted BY BORROWING — its reservation exceeds its own nominal, visible as a non-zero `borrowed` in the queue's own status, which is what distinguishes a collision reached by borrowing from one reached by refusal. (2) The total borrowed does not exceed what the cohort had available to lend. WHICH tenant borrows and which queues is NOT asserted: all three have identical nominal, demand, cohort and priority, nothing in Kueue specifies an order between equal claimants, and a check naming a winner would be asserting an implementation detail that can change between minors. CONDITIONAL: the run prints a fixed THREE-TENANT: not applied token and the assert carries the alternation, so the layer's checks stay green before the three-tenant manifest is applied — the same idiom labs/tools/size-gate.sh uses for size-conditional checks, and the alternation is visible in this file on purpose so a reader can see which checks are conditional and on what",
+      "weight": 3,
+      "run": "if ! KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get cohort.kueue.x-k8s.io grid-tenants >/dev/null 2>&1; then echo \"THREE-TENANT: not applied (kubectl apply -f labs/clusters/grid-core/addons/kueue-kwok/three-tenant-v1beta2.yaml)\"; else KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get clusterqueues.kueue.x-k8s.io -o json | jq -r 'def num: if type==\"string\" then (if test(\"m$\") then (sub(\"m$\";\"\") | tonumber / 1000) else tonumber end) else . end; [.items[] | select(.spec.cohortName == \"grid-tenants\") | {nom: (.spec.resourceGroups[0].flavors[0].resources[] | select(.name==\"cpu\") | .nominalQuota | num), res: (([.status.flavorsReservation[]?.resources[]? | select(.name==\"cpu\") | .total] | first // 0) | num), bor: (([.status.flavorsReservation[]?.resources[]? | select(.name==\"cpu\") | .borrowed] | first // 0) | num)}] as $q | ([$q[] | .bor] | add) as $borrowed | ([$q[] | (.nom - (if .res < .nom then .res else .nom end))] | add) as $lendable | ([$q[] | select(.bor > 0)] | length) as $borrowers | \"borrowers=\" + ($borrowers | tostring) + \" borrowed=\" + ($borrowed | tostring) + \" lendable=\" + ($lendable | tostring) + \" invariant=\" + (if $borrowers >= 1 and $borrowed <= $lendable then \"ok\" else \"VIOLATED\" end)'; fi",
+      "assert": {
+        "matches": "^borrowers=[1-9][0-9]* borrowed=[0-9.]+ lendable=[0-9.]+ invariant=ok$|^THREE-TENANT: not applied"
+      }
+    },
+    {
+      "id": "exactly-one-tenant-is-refused-and-refused-for-quota",
+      "describe": "the collision itself, counted rather than named: three tenant Workloads, two with a non-null .status.admission, and exactly one un-admitted whose QuotaReserved reason is WaitingForQuota. The reason is asserted and not just the refusal, because a tenant refused for TOPOLOGY would have an identically null admission — and this manifest deliberately configures no topology constraint precisely so that cannot happen. Counts, never names: which tenant loses is not a specified order. CONDITIONAL: the run prints a fixed THREE-TENANT: not applied token and the assert carries the alternation, so the layer's checks stay green before the three-tenant manifest is applied — the same idiom labs/tools/size-gate.sh uses for size-conditional checks, and the alternation is visible in this file on purpose so a reader can see which checks are conditional and on what",
+      "weight": 3,
+      "run": "if ! KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get cohort.kueue.x-k8s.io grid-tenants >/dev/null 2>&1; then echo \"THREE-TENANT: not applied (kubectl apply -f labs/clusters/grid-core/addons/kueue-kwok/three-tenant-v1beta2.yaml)\"; else KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get workloads.kueue.x-k8s.io -A -o json | jq -r '[.items[] | select(.metadata.namespace | startswith(\"tenant-\"))] as $w | \"tenants=\" + ($w | length | tostring) + \" admitted=\" + ([$w[] | select(.status.admission != null)] | length | tostring) + \" refused_for_quota=\" + ([$w[] | select(.status.admission == null) | select(([.status.conditions[]? | select(.type==\"QuotaReserved\") | .reason] | first) == \"WaitingForQuota\")] | length | tostring)'; fi",
+      "assert": {
+        "matches": "^tenants=3 admitted=2 refused_for_quota=1$|^THREE-TENANT: not applied"
+      }
+    },
+    {
+      "id": "capacity-could-still-have-hosted-the-refused-tenant",
+      "describe": "THE ENTRY THAT MAKES THE NEGATIVE CONTROL MEAN QUOTA. It counts the simulated nodes that still have room for one of the refused tenant's replicas, from node allocatable minus the cpu requests actually placed there. Three or more such nodes means capacity WOULD have hosted the gang that quota refused — so quota bound strictly before capacity, which is the whole claim. Without this, a refusal attributed to quota is indistinguishable from one where the fleet was simply full, and that indistinguishability is the defect enlarging the fleet silently introduces. CONDITIONAL: the run prints a fixed THREE-TENANT: not applied token and the assert carries the alternation, so the layer's checks stay green before the three-tenant manifest is applied — the same idiom labs/tools/size-gate.sh uses for size-conditional checks, and the alternation is visible in this file on purpose so a reader can see which checks are conditional and on what",
+      "weight": 3,
+      "run": "if ! KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get cohort.kueue.x-k8s.io grid-tenants >/dev/null 2>&1; then echo \"THREE-TENANT: not applied (kubectl apply -f labs/clusters/grid-core/addons/kueue-kwok/three-tenant-v1beta2.yaml)\"; else KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get pods -A -o json | jq -r --argjson nodecpu 8 'def num: if type==\"string\" then (if test(\"m$\") then (sub(\"m$\";\"\") | tonumber / 1000) else tonumber end) else . end; [.items[] | select(.spec.nodeName != null) | select(.spec.nodeName | startswith(\"kwok-node\")) | {n: .spec.nodeName, c: ([.spec.containers[].resources.requests.cpu // \"0\" | num] | add)}] | group_by(.n) | map({node: .[0].n, free: ($nodecpu - ([.[].c] | add))}) | ([.[] | select(.free >= 7.5)] | length) as $roomy | \"nodes_with_room_for_a_replica=\" + ($roomy | tostring) + \" replicas_needed=3 capacity_sufficient=\" + (if $roomy >= 3 then \"yes\" else \"no\" end)'; fi",
+      "assert": {
+        "matches": "^nodes_with_room_for_a_replica=[0-9]+ replicas_needed=3 capacity_sufficient=yes$|^THREE-TENANT: not applied"
+      }
+    },
+    {
+      "id": "at-least-one-experiment-object-set-is-applied",
+      "describe": "THE ENTRY THAT CLOSES THE ALL-SKIP HOLE. Seven entries above are conditional on one or other of the layer's two experiment object sets — the TAS gang set and the three-tenant collision — because the layer legitimately runs in both configurations and a check that failed in the other one would be wrong. But conditional entries that can ALL skip at once would make this file pass over a cluster carrying neither, which is this phase's named failure mode wearing a different hat. So this entry counts the two object sets and refuses zero. It is NOT conditional and it cannot skip",
+      "weight": 2,
+      "run": "TAS=0; TEN=0; if KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get clusterqueue.kueue.x-k8s.io kueue-kwok-cq >/dev/null 2>&1; then TAS=1; fi; if KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get cohort.kueue.x-k8s.io grid-tenants >/dev/null 2>&1; then TEN=1; fi; echo \"experiment_sets=$((TAS + TEN)) tas=${TAS} three_tenant=${TEN}\"",
+      "assert": {
+        "matches": "^experiment_sets=[1-9] tas=[01] three_tenant=[01]$"
+      }
+    }
+  ]
+}

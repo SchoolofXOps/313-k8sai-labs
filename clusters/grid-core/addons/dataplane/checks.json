@@ -1,0 +1,61 @@
+{
+  "_why": "PLAT-03, PLAT-04. An ADDON LAYER's checks file. It lives beside the layer's script triple at labs/clusters/grid-core/addons/dataplane/checks.json, not at labs/mN/checks.json — that second path is the MODULE checks path C1 and C6 read for truth_contract, and a layer is not a module, so this file carries no Truth Contract tag at all. EVERY ENTRY ASSERTS OBJECT STATE AND NONE ASSERTS A PERFORMANCE NUMBER: no throughput, no latency, no percentage appears in any assert here. That is TRUST-06 and it is also self-interest — a throughput figure asserted by a learner's own checks file fails on a slower laptop and teaches the learner that the course is wrong. The storage FIGURES are produced by labs/storage/four-path/run.sh, which publishes the configuration they were taken under in the same invocation. No entry asserts a Pod PHASE either: a Running phase proves a container started and says nothing about whether the volume it was supposed to mount is there, which is why the mount entries read the Pod's own volumeMounts and the server entries read availableReplicas. THE TWO SCOPE LIMITS THIS LAYER CARRIES, both measured and both restated in verify.sh's header and in the generated harness-config.md: (1) no claim distinguishes the provisioned-volume path from the bind-mount path on this runtime, because the default provisioner resolves to a bind mount rather than a CSI data path and the measured gap was 3.3% on write and 10.6% on read against a 57.2% / 23.1% self-measured spread; (2) no absolute throughput figure may be presented as disk performance, because the guest cannot evict the host page cache — the claimable properties are the tier split, which held in 16 of 16 measurements, and the network-filesystem path's cold first write at 3.5 MiB/s in both runs, 69-125x slower than its second. matches is preferred over absent and over contains for every aggregate entry, because the runner merges stderr into stdout and because a matches anchored with ^ and $ on a jq-computed summary line is the only form that also FAILS over ZERO subjects: 'every path's server is available' across an empty list is vacuously true, and a checks file that passes on an un-applied layer is this phase's named failure mode. EVERY kubectl RUN SETS KUBECONFIG ITSELF, measured on the base profile: create.sh exports KUBECONFIG=/tmp/grid-core.kubeconfig, but an export inside a script dies with the script, so the learner's own shell has no context and a bare `kubectl --context kind-grid-core` fails with `context was not found`. THE OBJECT-STORAGE PATH IS NAMED FOR ITS PROTOCOL AND NEVER FOR A VENDOR, because the protocol is what is being taught; the entry that asserts that property scans the layer's three shell scripts and deliberately NOT this file, since the literals it searches for have to appear in its own `run` string and a scan that included this file would hit its own instrument.",
+  "checks": [
+    {
+      "id": "all-four-path-clients-are-present-and-available",
+      "describe": "the DISTINCT set of path client Deployments is exactly the four the layer applies, and each reports an available replica. Printed as available/total with a backreference, so a namespace with zero clients cannot satisfy it — a layer that applied three of four would otherwise still exit 0 and the missing path would simply not be mentioned",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n spike-02 get deploy -o json | jq -r '[.items[] | select(.metadata.name | test(\"^client-(s3|nfs|pvc|hostpath)$\"))] | \"path_clients=\" + ([.[] | select((.status.availableReplicas // 0) >= 1)] | length | tostring) + \"/\" + (length | tostring)'",
+      "assert": { "matches": "^path_clients=4/4$" }
+    },
+    {
+      "id": "both-in-cluster-servers-are-available",
+      "describe": "the two paths that need a server of their own — the object-storage endpoint and the network-filesystem provisioner — each report an available replica. The other two paths need no server, which is itself part of what the lab compares. Counted rather than named one by one, so the count is what fails over an empty namespace",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n spike-02 get deploy -o json | jq -r '[.items[] | select(.metadata.name | test(\"^(s3-server|nfs-provisioner)$\"))] | \"servers=\" + ([.[] | select((.status.availableReplicas // 0) >= 1)] | length | tostring) + \"/\" + (length | tostring)'",
+      "assert": { "matches": "^servers=2/2$" }
+    },
+    {
+      "id": "each-filesystem-path-mounts-its-volume-at-the-expected-path",
+      "describe": "read off the RUNNING Pods, not off the Deployment template: each of the three filesystem paths mounts its own volume at /target, and the protocol path has no such volume because its data path IS the protocol — a /target on it would mean two manifests were mixed. Printed as mounted/total with a backreference so 0 of 0 cannot satisfy it, plus the protocol client's own count",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n spike-02 get pods -l spike=spike-02 -o json | jq -r '[.items[] | select(.status.phase == \"Running\") | select(.metadata.labels.app | startswith(\"client-\")) | {app: .metadata.labels.app, t: ([.spec.containers[].volumeMounts[]? | select(.mountPath == \"/target\")] | length)}] | \"fs_mounted=\" + ([.[] | select(.app != \"client-s3\") | select(.t > 0)] | length | tostring) + \"/\" + ([.[] | select(.app != \"client-s3\")] | length | tostring) + \" protocol_with_volume=\" + ([.[] | select(.app == \"client-s3\") | select(.t > 0)] | length | tostring) + \"/\" + ([.[] | select(.app == \"client-s3\")] | length | tostring)'",
+      "assert": { "matches": "^fs_mounted=3/3 protocol_with_volume=0/1$" }
+    },
+    {
+      "id": "the-bind-mount-path-resolves-to-the-declared-host-directory",
+      "describe": "the node container's OWN bind table names the declared host directory as the source of the layer's fourth path. This is what makes that path a measurement of the host filesystem rather than of the node's overlay: the mount is create-time-only, declared in the base profile's create.sh, and it cannot be added to a running cluster — so the layer is a layer precisely because the base already carries it",
+      "weight": 2,
+      "run": "docker inspect grid-core-worker --format '{{range .Mounts}}{{if eq .Destination \"/mnt/spike-02-hostpath\"}}bind_source={{.Source}} type={{.Type}}{{end}}{{end}}'",
+      "assert": { "matches": "^bind_source=/var/lib/313-spike-02-hostpath type=bind$" }
+    },
+    {
+      "id": "the-bind-mount-path-is-not-the-node-overlay-filesystem",
+      "describe": "the filesystem type at the bind-mount path DIFFERS from the type at the node's root. The bind table entry above proves what was asked for; this proves what the kernel resolved, and it is the half that catches a directory present inside the node but not bound from the host. Neither type is asserted by name — they differ between this arm64 host and an amd64 runner — so the assert requires both to be non-empty and the verdict to be distinct",
+      "weight": 2,
+      "run": "m=$(docker exec grid-core-worker stat -f -c %T /mnt/spike-02-hostpath 2>/dev/null); r=$(docker exec grid-core-worker stat -f -c %T / 2>/dev/null); if [ -n \"$m\" ] && [ -n \"$r\" ] && [ \"$m\" != \"$r\" ]; then d=yes; else d=no; fi; echo \"mount_fs=$m root_fs=$r distinct=$d\"",
+      "assert": { "matches": "^mount_fs=[^ ]+ root_fs=[^ ]+ distinct=yes$" }
+    },
+    {
+      "id": "the-object-storage-endpoint-answers-a-protocol-level-request",
+      "describe": "not a port check and not a Pod phase: the endpoint answers the object-storage protocol's own bucket-listing request with the protocol's own document element. A listening socket proves a process is up and a Running phase proves less than that. Issued from inside the path's own client Pod with that client's standard library, so nothing is installed to make the assertion, and no latency or throughput is read from the response",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n spike-02 exec deploy/client-s3 -- python3 -c 'import urllib.request;r=urllib.request.urlopen(\"http://s3:8333/\",timeout=30);b=r.read(4096).decode(\"utf-8\",\"replace\");print(\"protocol=http status=%s list_buckets_document=%s\" % (r.status, \"yes\" if \"ListAllMyBucketsResult\" in b else \"no\"))'",
+      "assert": { "matches": "^protocol=http status=200 list_buckets_document=yes$" }
+    },
+    {
+      "id": "every-image-the-layer-applies-is-digest-pinned",
+      "describe": "PLAT-01 over the layer's own object set, and the one entry here that needs no cluster: every image reference across the four path manifests carries an @sha256 digest. It counts the references as well as the unpinned ones, so a manifest set with zero image lines — a truncated or mis-read tree — cannot satisfy it either. The object-storage image is a multi-architecture INDEX digest at an exact release, so the same reference resolves on this arm64 host and on an amd64 runner",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && sed -n 's/^[[:space:]]*image:[[:space:]]*\\(.*\\)$/\\1/p' labs/storage/four-path/s3.yaml labs/storage/four-path/nfs.yaml labs/storage/four-path/pvc.yaml labs/storage/four-path/hostpath.yaml | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0 && index($0,\"__\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
+      "assert": { "matches": "^image_refs=[1-9][0-9]* unpinned=0$" }
+    },
+    {
+      "id": "the-object-storage-path-is-named-for-its-protocol-and-not-for-a-vendor",
+      "describe": "no path label, script variable, object name or comment in the layer's three shell scripts names either object-storage vendor — the one the design originally reached for or the one whose image is pinned now. The protocol is what is taught, and a vendor name in a path label ages badly: the original stand-in's community image is no longer anonymously pullable from any of its three registries, which is why the pin changed at all. THE SCANNED SET IS THE THREE SHELL SCRIPTS AND DELIBERATELY NOT checks.json: the literals this entry searches for have to appear in its own run string, so a scan that included this file would hit its own instrument. Counts the scanned files as well as the hits, so an empty or mis-pathed scan cannot pass",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && awk 'BEGIN{IGNORECASE=1} FNR==1{f++} tolower($0) ~ /minio|seaweedfs/ {h++} END{printf \"scanned=%d vendor_hits=%d\\n\", f+0, h+0}' labs/clusters/grid-core/addons/dataplane/create.sh labs/clusters/grid-core/addons/dataplane/verify.sh labs/clusters/grid-core/addons/dataplane/teardown.sh",
+      "assert": { "matches": "^scanned=3 vendor_hits=0$" }
+    }
+  ]
+}

@@ -23,6 +23,18 @@
 # public registry from a spike). Phase 3 owns the publishing decision, with its
 # own review. There is deliberately no registry flag in this script.
 #
+# THE IMAGE IS NAMED FOR THE PROFILE IT SERVES, and the old name may still be
+# in your local image store. Plan 03-04 renamed this artefact from its
+# spike-era name to `313-grid-sandbox-node`, because the one thing it exists
+# for is `labs/clusters/grid-sandbox/create.sh`'s --image argument. The
+# spike-era tag is NOT deleted by this script and may sit in the store for
+# months. That is exactly why the profile ASSERTS the image is present and
+# names this script when it is not, rather than side-loading by tag: on this
+# build host the store already carries two superseded 304-era images, and a
+# side-load by tag is how a cluster comes up on the wrong one. `docker images`
+# will show both names until you remove the old one yourself:
+#   docker image rm 313-runsc-node:v1.37.x-runsc   # optional, reclaims ~1.8 GB
+#
 # Usage:
 #   bash build.sh                              # multi-arch check + load host arch
 #   PLATFORMS=linux/arm64 bash build.sh        # one platform only (faster)
@@ -43,7 +55,13 @@ set -euo pipefail
 # --- knobs -------------------------------------------------------------------
 # Local image name. Not a registry path: this image is never published in
 # Phase 1, so it deliberately carries no registry host.
-IMAGE="${IMAGE:-313-runsc-node}"
+#
+# It NAMES THE PROFILE IT SERVES (`grid-sandbox`) rather than the runtime it
+# carries, because the profile is the only consumer and the node image IS the
+# create-time-immutable decision that forces that profile to exist. See the
+# header for why the spike-era name is not deleted and why the profile asserts
+# rather than side-loads.
+IMAGE="${IMAGE:-313-grid-sandbox-node}"
 # Tag names the Kubernetes version and what was added, so a `docker images`
 # listing is self-describing. The node image this is built FROM is pinned by
 # DIGEST in the Dockerfile; this tag names the local artefact only and is not a
@@ -62,7 +80,7 @@ BASE_DIGEST="${BASE_DIGEST:-sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620
 GVISOR_RELEASE="${GVISOR_RELEASE:-release-20260928.0}"
 
 PROFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT_DIR="${OUT_DIR:-/tmp/313-runsc-node-oci}"
+OUT_DIR="${OUT_DIR:-/tmp/313-grid-sandbox-node-oci}"
 
 # --- pinned-binary resolution -------------------------------------------------
 # Same hazard as the cluster profiles: on this build host a stale copy of the
@@ -235,4 +253,8 @@ echo "    runsc        : ${RUNSC_VERSION}"
 echo "    handlers     : ${HANDLER}"
 echo "    oci index    : ${OUT_DIR}/image.tar (${PLATFORM_COUNT} platform manifests)"
 echo "OK: ${IMAGE}:${TAG} built for ${PLATFORMS}, loaded for ${HOST_PLATFORM}, runsc present and the 'runsc' containerd handler registered. Nothing published."
-echo "next: kind load docker-image ${IMAGE}:${TAG} --name spike-core"
+# NOT `kind load` -- that side-loads an image INTO a running cluster, and this
+# image's whole purpose is to BE the cluster's node image, consumed at create
+# time by --image. A node whose containerd config was fixed at image build
+# cannot be given a new handler by loading a second image next to it.
+echo "next: bash labs/clusters/grid-sandbox/create.sh   # consumes this image as --image"

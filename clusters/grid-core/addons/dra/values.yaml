@@ -1,0 +1,97 @@
+# addon-dra — the committed chart values for dra-example-driver v0.5.0.
+#
+# These values are rendered by create.sh with `helm template` against the
+# IN-TREE chart at the upstream git tag v0.5.0. They are not a Helm release's
+# values: nothing installs this chart with `helm install`, because the rendered
+# object set is committed beside this file as rendered-pinned.yaml so it is
+# reviewable in the tree.
+#
+# WHAT THIS LAYER ADVERTISES, said once and plainly: SYNTHETIC DEVICES. They are
+# not accelerators, there is no accelerator in this VM, and nothing the driver
+# reports is a measurement of any device. The upstream chart's own key names
+# carry a device-vendor word (deviceProfile, gpuPublishPCIeRoot) because they are
+# upstream's keys and this file cannot rename them; the devices they configure
+# are simulated.
+#
+# Every value below is set DELIBERATELY, including the ones that match the
+# upstream default. A lab that asserts a fact must not depend on a default it
+# does not state: the default can change in the next chart release and the
+# assertion would then be testing upstream's opinion rather than this course's.
+# So each entry carries why it is here.
+#
+# Authority for the driver name: ROADMAP Phase 3 Success Criterion 3 as amended
+# 2026-10-09 (founder-approved).
+---
+# THE ONE HONEST LEVER, and the whole of what this layer can rename.
+#
+# `driverName` is interpolated by the chart helper `dra-example-driver.driverName`
+# (templates/_helpers.tpl:128-129) into THREE places at once:
+#   - the driver name the kubelet plugin registers, which lands on every
+#     ResourceSlice as `spec.driver`;
+#   - `metadata.name` of the DeviceClass (templates/deviceclass.yaml:5);
+#   - the CEL selector's subject, `device.driver == '<driverName>'`
+#     (templates/deviceclass.yaml:9).
+#
+# So the `sim-` prefix and the `example.com` domain both arrive through this
+# single value, and they arrive on all three objects together. That is why SC3
+# was amended to assert this and not device names: the device NAME, the model
+# string and the 80Gi capacity are Go constants in the driver and no chart value
+# reaches them — see planning/lab-tests/03-addon-dra.md for the citations.
+driverName: sim-accelerator.example.com
+
+# KEPT at the upstream default, and this needs a reason because the alternative
+# looks tempting. The `cpu` profile names its devices `numa-%d` with
+# `CPU_DEVICE_` environment variables and carries no device-vendor string
+# anywhere (internal/profiles/cpu/cpu.go:72,127), which would make the
+# synthetic-device captions unnecessary.
+#
+# It is not taken. This course teaches accelerator allocation, and a device
+# profile that models NUMA nodes would teach the wrong object — a learner would
+# practise the claim lifecycle against devices that are not the kind of device
+# the course is about. The caption discipline STANDARDS.md C15 enforces is the
+# mitigation for the driver's own emitted text, and it is already built.
+deviceProfile: gpu
+
+kubeletPlugin:
+  # The number of synthetic devices advertised per node. 8 is also the chart
+  # default; it is written here because verify.sh and checks.json ASSERT this
+  # number and both READ it out of this file. An asserted number must have a
+  # stated source.
+  numDevices: 8
+
+  # KEP-4680 device health reporting. `true` is the chart default at v0.5.0
+  # (values.yaml:109); set explicitly because PLAT-07's whole assertion is that
+  # a health transition reaches pod.status.containerStatuses[].allocatedResourcesStatus,
+  # and with this false the driver advertises no health service at all and
+  # WatchHealthStatus returns ErrHealthNotSupported.
+  deviceHealth: true
+
+  # `false` is the chart default at v0.5.0 (values.yaml:114) and is set
+  # explicitly because the Task-2 health probe depends on it. With this true the
+  # simulator randomly walks devices through simulated faults on their own, so a
+  # device could become unhealthy while nobody annotated anything — which would
+  # make the probe's two transitions indistinguishable from drift. With it
+  # false, `updateDeviceState` returns immediately
+  # (cmd/dra-example-kubeletplugin/health_simulator.go:200-202) and a device's
+  # state changes only when something changes it.
+  simulateHealthChanges: false
+
+# Publish `resource.kubernetes.io/pcieRoot` on every synthetic device.
+#
+# SET EXPLICITLY, AND THE REASON IS A DISAGREEMENT IN THE EVIDENCE. The chart
+# default at v0.5.0 is `false` (values.yaml:45), yet SPIKE-05 observed
+# `resource.kubernetes.io/pcieRoot: pci0000:00` published with no `--set` in any
+# of its logs (planning/lab-tests/raw/spike-05/03-core-dra-driver.log:57-58; a
+# search for `--set` across planning/lab-tests/raw/spike-05/*.log returns
+# nothing). The two readings cannot both be right, and this file does not try to
+# settle which: setting the value explicitly removes the dependence on the
+# default either way. The attribute is wanted published because it is the
+# cross-driver matchAttribute demo M4 teaches.
+#
+# With `pcieRoots` left empty the driver assigns the two default roots
+# `pci0000:00` and `pci0000:80` round-robin by device index
+# (internal/profiles/helpers/pcie_topology.go:28,60), so an even-indexed device
+# gets the first and an odd-indexed device the second. verify.sh therefore
+# asserts the attribute is PRESENT and non-empty on every device, never that it
+# equals one particular value.
+gpuPublishPCIeRoot: true

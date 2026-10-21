@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kwok attach mode — install the kwok controller INTO the real spike-core cluster
+# kwok attach mode — install the kwok controller INTO the real grid-core cluster
 #
 # Purpose: give the real Kubernetes control plane a large, cheap, SIMULATED node
 # fleet to make scheduling and admission decisions about, without a second
@@ -7,13 +7,13 @@
 #
 # Mechanism — and this is the whole point of SPIKE-04. This installs the
 # upstream kwok controller as an ORDINARY in-cluster Deployment on the real
-# `spike-core` kind cluster, then creates plain `Node` objects carrying the
+# `grid-core` kind cluster, then creates plain `Node` objects carrying the
 # `kwok.x-k8s.io/node: fake` annotation. The controller adopts those Node
 # objects and fakes a kubelet for them: it runs the node-initialize stage so
 # they report Ready, keeps their Lease fresh, and transitions Pods that get
 # BOUND to them into Running.
 #
-#   The real kube-scheduler on spike-core still makes every placement decision.
+#   The real kube-scheduler on grid-core still makes every placement decision.
 #   The real Kueue admission controller still reserves every unit of quota.
 #   The kwok controller only fakes the kubelet, and only AFTER the binding.
 #
@@ -35,17 +35,25 @@
 # Usage:
 #   bash setup.sh                     # install controller + stages + fake fleet
 #   bash setup.sh teardown            # remove fake fleet + stages + controller
-#   FAKE_NODES=12 bash setup.sh       # bigger simulated fleet. NOTE: valid for
-#                                     # the SCALE profile, but kueue-v1beta2.yaml's
-#                                     # quota and published arithmetic assume the
-#                                     # default 6 nodes / 3 racks — see the
-#                                     # FLEET PRECONDITION block in that file.
+#   FAKE_NODES=12 bash setup.sh       # bigger simulated fleet. Every committed
+#                                     # manifest whose arithmetic is fixed text
+#                                     # declares its required fleet shape in
+#                                     # FLEET_SHAPES below, and deploy_nodes
+#                                     # prints which manifests THIS fleet is
+#                                     # valid for and which it would silently
+#                                     # invalidate. Read that line before
+#                                     # applying anything.
+#
+# This file is also DRIVEN by labs/clusters/grid-core/addons/kueue-kwok/create.sh,
+# which exports FAKE_NODES / RACKS_PER_BLOCK / NODE_CPU from course.config.json
+# rather than duplicating any of the work below. Run standalone it is still the
+# SPIKE-04 path, unchanged in behaviour and unchanged in default fleet shape.
 #
 # Env (match planning/lab-tests/spike-00-preflight.md on the build host):
-#   export KUBECONFIG=/tmp/spike-core.kubeconfig   # isolated; set by the profile
+#   export KUBECONFIG=/tmp/grid-core.kubeconfig   # isolated; set by the profile
 #
-# Prerequisite: the spike-core profile is up and verified —
-#   bash labs/clusters/spike-core/create.sh && bash labs/clusters/spike-core/verify.sh
+# Prerequisite: the grid-core profile is up and verified —
+#   bash labs/clusters/grid-core/create.sh && bash labs/clusters/grid-core/verify.sh
 #
 # Reporting contract (same as the cluster profile): every hard assert prints
 # `FAIL: <what> <remedy>` to stderr and exits 1; on success exactly one line
@@ -56,7 +64,7 @@
 set -euo pipefail
 
 # --- pinned-binary resolution -------------------------------------------------
-# Kept identical to labs/clusters/spike-core/*.sh. Installing a pinned binary is
+# Kept identical to labs/clusters/grid-core/*.sh. Installing a pinned binary is
 # not the same as it being the one that runs: on this build host
 # /usr/local/bin/kind (v0.32.0) and ~/.rd/bin/kubectl resolve FIRST from a login
 # shell. An `export PATH` only lives as long as the shell that ran it, so this
@@ -99,11 +107,18 @@ NODE_CPU="${NODE_CPU:-8}"
 NODE_MEMORY="${NODE_MEMORY:-32Gi}"
 NODE_PODS="${NODE_PODS:-110}"
 
+# How long the fleet is given to reach Ready, in total rather than per node. The
+# per-node wait this replaced was 90s EACH, which at the scale fleet's 500 nodes
+# is a bound no run would ever reach; the aggregate poll below asks the fleet
+# question once and the figure is a fleet figure. assert_fleet is what actually
+# refuses a short fleet, so a timeout here reports rather than decides.
+FLEET_READY_TIMEOUT="${FLEET_READY_TIMEOUT:-300}"
+
 # The cluster this installs INTO — the real kind cluster created by
-# labs/clusters/spike-core/create.sh.
-CONTEXT="${CONTEXT:-kind-spike-core}"
-CLUSTER_NAME="${CLUSTER_NAME:-spike-core}"
-export KUBECONFIG="${KUBECONFIG:-/tmp/spike-core.kubeconfig}"
+# labs/clusters/grid-core/create.sh.
+CONTEXT="${CONTEXT:-kind-grid-core}"
+CLUSTER_NAME="${CLUSTER_NAME:-grid-core}"
+export KUBECONFIG="${KUBECONFIG:-/tmp/grid-core.kubeconfig}"
 
 # Release-asset base, pinned to the exact tag, never `latest`.
 #   kwok.yaml       CRDs + RBAC + the kwok-controller Deployment
@@ -182,7 +197,7 @@ fetch_verified() {
 preflight() {
   if ! kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
     echo "FAIL: kind cluster '${CLUSTER_NAME}' not found — this installs INTO the real cluster." >&2
-    echo "      Run: bash labs/clusters/spike-core/create.sh && bash labs/clusters/spike-core/verify.sh" >&2
+    echo "      Run: bash labs/clusters/grid-core/create.sh && bash labs/clusters/grid-core/verify.sh" >&2
     exit 1
   fi
   if ! kc get --raw='/readyz' >/dev/null 2>&1; then
@@ -291,40 +306,153 @@ render_node() {
     "${NODE_TEMPLATE}"
 }
 
+# Every manifest in this repository whose arithmetic is FIXED TEXT tied to a
+# particular fleet shape, as `nodes:racks_per_block:node_cpu:path` triples. A
+# fleet that matches none of them gets a NOTE naming every one it invalidates.
+#
+# This list is the generalisation of what used to be a single hardcoded
+# comparison against 6/3/8. One manifest was one `if`; two manifests with
+# different shapes cannot be, and the second one arrived in plan 03-03. A fleet
+# shape is checked against the DECLARED shape of each manifest rather than
+# against a literal, so adding a third manifest is adding a line here.
+#
+# `0` in the nodes field means the manifest's arithmetic does NOT depend on the
+# node count — it depends only on the domain shape. tas-gangs-v1beta2.yaml is
+# that case and its own precondition block derives why.
+FLEET_SHAPES="${FLEET_SHAPES:-6:3:8:labs/kwok/attach/kueue-v1beta2.yaml 9:3:8:labs/clusters/grid-core/addons/kueue-kwok/three-tenant-v1beta2.yaml 0:3:8:labs/clusters/grid-core/addons/kueue-kwok/tas-gangs-v1beta2.yaml}"
+
+warn_fleet_shape() {
+  # A manifest whose quota and published arithmetic are fixed text is not BROKEN
+  # by a differently-shaped fleet, it is INVALIDATED by one: the experiment still
+  # runs, every command still exits 0, and the result is reached for a reason the
+  # output does not mention. Measured example, from the 6-node manifest's own
+  # precondition block: with a quota that is no longer slack relative to the
+  # gangs, the TAS negative control is refused by QUOTA rather than by TOPOLOGY
+  # and still looks like it passes.
+  #
+  # So this prints at the point the fleet is CREATED, which is the last moment
+  # before the invalidation becomes invisible.
+  local spec want_nodes want_racks want_cpu path matched=0 any_warn=0
+  for spec in ${FLEET_SHAPES}; do
+    want_nodes="${spec%%:*}"; spec="${spec#*:}"
+    want_racks="${spec%%:*}"; spec="${spec#*:}"
+    want_cpu="${spec%%:*}"
+    path="${spec#*:}"
+    if { [ "${want_nodes}" = "0" ] || [ "${want_nodes}" = "${FAKE_NODES}" ]; } \
+       && [ "${want_racks}" = "${RACKS_PER_BLOCK}" ] && [ "${want_cpu}" = "${NODE_CPU}" ]; then
+      matched=$(( matched + 1 ))
+      echo "    valid for: ${path}"
+    else
+      any_warn=1
+    fi
+  done
+  if [ "${any_warn}" -eq 1 ]; then
+    echo >&2
+    echo "    NOTE: this fleet is ${FAKE_NODES} node(s) x ${NODE_CPU} cpu, ${RACKS_PER_BLOCK} rack(s)/block." >&2
+    for spec in ${FLEET_SHAPES}; do
+      want_nodes="${spec%%:*}"; spec="${spec#*:}"
+      want_racks="${spec%%:*}"; spec="${spec#*:}"
+      want_cpu="${spec%%:*}"
+      path="${spec#*:}"
+      if { [ "${want_nodes}" = "0" ] || [ "${want_nodes}" = "${FAKE_NODES}" ]; } \
+         && [ "${want_racks}" = "${RACKS_PER_BLOCK}" ] && [ "${want_cpu}" = "${NODE_CPU}" ]; then
+        continue
+      fi
+      if [ "${want_nodes}" = "0" ]; then
+        echo "          Do NOT apply ${path}" >&2
+        echo "            — it needs ${want_racks} rack(s)/block and ${want_cpu} cpu/node (any node count)." >&2
+      else
+        echo "          Do NOT apply ${path}" >&2
+        echo "            — it needs exactly ${want_nodes} node(s), ${want_racks} rack(s)/block, ${want_cpu} cpu/node." >&2
+      fi
+    done
+    echo "          Re-derive the quota and the arithmetic first, in that file's own" >&2
+    echo "          FLEET PRECONDITION block. A differently-shaped fleet does not break" >&2
+    echo "          these experiments, it INVALIDATES them, and nothing in the output" >&2
+    echo "          says so." >&2
+    echo >&2
+  fi
+  if [ "${matched}" -eq 0 ]; then
+    echo "    valid for: no committed manifest in this repository" >&2
+  fi
+}
+
 deploy_nodes() {
   echo "==> Creating ${FAKE_NODES} SIMULATED node(s): ${NODE_CPU} cpu / ${NODE_MEMORY} each,"
   echo "    arch label ${ARCH_LABEL}, ${RACKS_PER_BLOCK} rack(s) per topology block,"
   echo "    adoption annotation kwok.x-k8s.io/node=fake, taint kwok.x-k8s.io/node=fake:NoSchedule"
-  # kueue-v1beta2.yaml's nominalQuota (48 cpu / 192Gi) and its entire published
-  # arithmetic are fixed for 6 nodes x 8 cpu with 3 racks per block. A
-  # different fleet does not break that manifest, it INVALIDATES it: at
-  # FAKE_NODES=12 the fleet is 96 cpu against a 48 cpu quota, so quota becomes
-  # the binding constraint and the TAS negative control is refused by quota
-  # rather than by topology — it still looks like it passes. Say so here, at
-  # the point the fleet is created, rather than leaving it to be discovered.
-  if [ "${FAKE_NODES}" != "6" ] || [ "${RACKS_PER_BLOCK}" != "3" ] \
-     || [ "${NODE_CPU}" != "8" ]; then
-    echo
-    echo "    NOTE: this fleet is ${FAKE_NODES} node(s) x ${NODE_CPU} cpu, ${RACKS_PER_BLOCK} rack(s)/block." >&2
-    echo "          kueue-v1beta2.yaml assumes 6 x 8 cpu / 3 racks per block, and its" >&2
-    echo "          quota and arithmetic are fixed text. Do NOT apply it against this" >&2
-    echo "          fleet without re-deriving both: the TAS negative control would be" >&2
-    echo "          refused by QUOTA rather than by TOPOLOGY and would still appear to" >&2
-    echo "          pass. See the FLEET PRECONDITION block in that file." >&2
-    echo
-  fi
-  local i=0
+  warn_fleet_shape
+
+  # Rendered into ONE multi-document stream and applied ONCE, rather than one
+  # `kubectl apply` per node. This used to be a per-node apply, which is correct
+  # and unremarkable at 6 nodes and unusable at the scale fleet's 500: a thousand
+  # sequential kubectl invocations (apply plus wait) is minutes of process
+  # startup, and plan 03-03's scale measurement has to reach 500 and attempt
+  # 1000. One document stream is also what makes the fleet REPLACE rather than
+  # accumulate on a re-apply, which is the property the layer's idempotency
+  # assertion depends on.
+  local manifest i=0
+  manifest="$(mktemp "${TMPDIR:-/tmp}/kwok-fleet.XXXXXX")"
   while [ "${i}" -lt "${FAKE_NODES}" ]; do
-    render_node "${i}" | kc apply -f -
+    echo "---" >> "${manifest}"
+    render_node "${i}" >> "${manifest}"
     i=$(( i + 1 ))
   done
+  if ! kc apply -f "${manifest}" >/dev/null; then
+    echo "FAIL: applying the ${FAKE_NODES}-node simulated fleet failed." >&2
+    echo "      The rendered fleet is at ${manifest} for inspection." >&2
+    exit 1
+  fi
+  rm -f "${manifest}"
 
-  echo "==> Waiting for the simulated nodes to report Ready (kwok node-initialize stage)"
-  local n=0
-  while [ "${n}" -lt "${FAKE_NODES}" ]; do
-    kc wait --for=condition=Ready "node/kwok-node-${n}" --timeout=90s >/dev/null 2>&1 || true
-    n=$(( n + 1 ))
+  # PRUNE simulated nodes above the requested count, so the fleet SHRINKS as well
+  # as grows. An apply alone only ever adds: a learner who ran the scale lab at
+  # 500 nodes and then ran the collision lab at 9 would keep 491 extra simulated
+  # nodes, and a fleet larger than the lab expects does not break an experiment,
+  # it INVERTS which constraint binds. The layer's verify does catch the count and
+  # names the knob — but leaving the only route to a correct fleet as "tear the
+  # whole layer down first" is leaving the hazard in place and labelling it.
+  #
+  # Only `type=kwok` nodes matching this script's own `kwok-node-<i>` naming are
+  # considered, and only those whose index is >= FAKE_NODES. A simulated node
+  # somebody else created under a different name is left alone.
+  local existing nm idx stale=""
+  existing="$(kc get nodes -l type=kwok -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+  for nm in ${existing}; do
+    case "${nm}" in
+      kwok-node-*)
+        idx="${nm#kwok-node-}"
+        case "${idx}" in
+          ''|*[!0-9]*) continue ;;
+        esac
+        if [ "${idx}" -ge "${FAKE_NODES}" ]; then
+          stale="${stale} ${nm}"
+        fi
+        ;;
+    esac
   done
+  if [ -n "${stale}" ]; then
+    echo "==> Pruning simulated node(s) above the requested fleet size of ${FAKE_NODES}"
+    echo "    (an apply only ever adds; a fleet larger than the lab expects inverts"
+    echo "     which constraint binds, so the shrink is done here rather than left"
+    echo "     to a teardown nobody knew they needed)"
+    # shellcheck disable=SC2086
+    kc delete node ${stale} --wait=true >/dev/null 2>&1 || true
+  fi
+
+  # Poll the AGGREGATE Ready count rather than waiting on each node in turn: the
+  # per-node form is one kubectl process per node, and the question being asked
+  # is about the fleet.
+  echo "==> Waiting for the simulated nodes to report Ready (kwok node-initialize stage)"
+  local waited=0 ready=0
+  while [ "${waited}" -lt "${FLEET_READY_TIMEOUT}" ]; do
+    ready="$(kc get nodes -l type=kwok -o json 2>/dev/null \
+              | jq '[.items[] | select(any(.status.conditions[]; .type=="Ready" and .status=="True"))] | length' 2>/dev/null || echo 0)"
+    if [ "${ready:-0}" -ge "${FAKE_NODES}" ]; then break; fi
+    sleep 3
+    waited=$(( waited + 3 ))
+  done
+  echo "    ${ready:-0}/${FAKE_NODES} Ready after ${waited}s"
 }
 
 # --- asserts ------------------------------------------------------------------

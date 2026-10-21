@@ -1,0 +1,90 @@
+{
+  "_why": "PLAT-04. A PROFILE's checks file, and it lives here beside the script triple rather than at labs/mN/checks.json — that second path is the MODULE checks path C1 and C6 read for truth_contract, and a profile is not a module. So this file carries no Truth Contract tag at all, deliberately: the tag is a module-level fact. Every entry below asserts OBJECT STATE and none asserts a performance number, per the standing rule — a throughput or latency figure asserted by a learner's own checks file fails on a slower laptop and teaches the learner that the course is wrong. SIZE-CONDITIONALITY LIVES IN THE run STRING, never on the check object: CourseSmith's runner evaluates checks as a flat array, runs every entry, and IGNORES an unrecognised key, so a \"size\": 16 field would not skip a check — it would leave it running and failing while reading on the page like a skip. The one conditional entry below therefore calls labs/tools/size-gate.sh and its assert carries the ^SIZE-GATE: skipped alternation the authority fixes. matches is preferred over absent throughout, because the runner merges stderr into stdout and an absent assertion fails the moment any unrelated warning carries the forbidden substring. EVERY kubectl RUN SETS KUBECONFIG ITSELF, and that is a measured requirement rather than belt-and-braces: create.sh exports KUBECONFIG=/tmp/grid-core.kubeconfig, but an export inside a script dies with the script, so the learner's own shell has no context and a bare `kubectl --context kind-grid-core` fails with `context was not found`. Six of these eight entries failed that way on their first live run. The ${KUBECONFIG:-...} form honours a caller who set it deliberately and otherwise uses the profile's isolated path, which is exactly what the three scripts do. PATH NOTE for plan 03-10: the two runs that need the shared helper resolve the repository root with git and then reference labs/tools/...; the public labs tree strips the labs/ prefix for the Grid spine, so the sync path owns reconciling that.",
+  "checks": [
+    {
+      "id": "nodes-match-requested-size",
+      "describe": "the node count READ FROM THE CLUSTER equals 1 control-plane + lab.sizes.<SIZE>.worker_nodes REAL NODES ONLY, and the selector is load-bearing: MEASURED 2026-10-14, CI run 38491797177 and reproduced locally, this profile's verify.sh read ELEVEN nodes against an expected two with the queueing layer applied, because addon-kueue-kwok adds nine SIMULATED Node objects. A simulated node is not a machine, it carries no kubelet, and nothing on it is a GPU. `-l '!type'` is this project's existing idiom for the distinction — addons/kueue-kwok/verify.sh already selects real nodes with `!type` and the fleet with `type=kwok`, and labs/kwok/attach/setup.sh is what applies the label. A learner who applies that layer and then runs this profile's checks would otherwise get a red check with no explanation, and the layer's own checks file is what counts the fleet. The count is also now required NON-ZERO rather than merely equal to itself: the old backreference was satisfied by got=0 want=0, which is a cluster with no nodes at all agreeing with a size that expects none.",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && bash -c 'set -eu; export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; . labs/tools/size-gate.sh; assert_size; want=$((1 + $(size_value worker_nodes))); got=$(kubectl --context kind-grid-core get nodes -l \"!type\" --no-headers | wc -l | tr -d \" \"); sim=$(kubectl --context kind-grid-core get nodes -l type=kwok --no-headers 2>/dev/null | wc -l | tr -d \" \"); printf \"node-count got=%s want=%s simulated-excluded=%s\\n\" \"$got\" \"$want\" \"$sim\"'",
+      "assert": {
+        "matches": "^node-count got=([1-9][0-9]*) want=\\1 simulated-excluded=[0-9]+$"
+      }
+    },
+    {
+      "id": "kubelet-version-is-the-pin",
+      "describe": "the kubelet version EVERY REAL NODE reports, read from the cluster rather than from the pinned node image's tag — the image proves what was asked for, the node proves what runs. Two defects measured 2026-10-14 and fixed together. REAL NODES ONLY, and the selector is load-bearing: MEASURED 2026-10-14, CI run 38491797177 and reproduced locally, this profile's verify.sh read ELEVEN nodes against an expected two with the queueing layer applied, because addon-kueue-kwok adds nine SIMULATED Node objects. A simulated node is not a machine, it carries no kubelet, and nothing on it is a GPU. `-l '!type'` is this project's existing idiom for the distinction — addons/kueue-kwok/verify.sh already selects real nodes with `!type` and the fleet with `type=kwok`, and labs/kwok/attach/setup.sh is what applies the label. A learner who applies that layer and then runs this profile's checks would otherwise get a red check with no explanation, and the layer's own checks file is what counts the fleet. AND THE OLD ASSERT WAS VACUOUS IN A SECOND WAY: it joined every node's version into ONE string with `{.items[*]}` and matched the substring `v1.37.`, so it passed as long as ANY node reported the pin. With a simulated fleet applied the joined string is literally `fake fake fake … v1.37.0`, measured on this cluster, and it passed — so a genuinely drifted REAL node could hide behind a compliant one. The versions are now folded to a unique set while the NODES are counted before the fold — `real_nodes` is the number of real nodes and not the size of the version set, which an earlier cut of this entry got wrong and which would have published 1 on a two-node cluster. `nonpinned_nodes` counts NODES whose version is off the pin, so one drifted node out of three is visible as 1 rather than hidden. The input is sorted before the fold so the printed set is deterministic rather than dependent on the order the API server returned. An empty set cannot satisfy the assert: it would print real_nodes=0 with an empty version field and the anchored form requires both.",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get nodes -l '!type' -o jsonpath='{range .items[*]}{.status.nodeInfo.kubeletVersion}{\"\\n\"}{end}' | sort | awk 'BEGIN{n=0;bad=0;s=\"\"}{if($0==\"\")next;n++;if(!($0 in seen)){seen[$0]=1;s=(s==\"\"?$0:s\",\"$0)}if($0 !~ /^v1\\.37\\./)bad++}END{printf \"real_nodes=%d kubelet_versions=%s nonpinned_nodes=%d\\n\", n, s, bad}'",
+      "assert": {
+        "matches": "^real_nodes=[1-9][0-9]* kubelet_versions=v1\\.37\\.[^ ]* nonpinned_nodes=0$"
+      }
+    },
+    {
+      "id": "gate-genericworkload-enabled",
+      "describe": "the API server reports the GenericWorkload gate enabled — beta and default-OFF in 1.37, so this is only true because the profile set it at create time",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get --raw /metrics | /usr/bin/grep 'kubernetes_feature_enabled{name=\"GenericWorkload\"' | tail -1",
+      "assert": {
+        "matches": "name=\"GenericWorkload\".*\\} 1$"
+      }
+    },
+    {
+      "id": "gate-draworkloadresourceclaims-enabled",
+      "describe": "the API server reports the DRAWorkloadResourceClaims gate enabled — beta and default-OFF in 1.37",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get --raw /metrics | /usr/bin/grep 'kubernetes_feature_enabled{name=\"DRAWorkloadResourceClaims\"' | tail -1",
+      "assert": {
+        "matches": "name=\"DRAWorkloadResourceClaims\".*\\} 1$"
+      }
+    },
+    {
+      "id": "gate-nodelifecycleconditions-enabled",
+      "describe": "the API server reports the NodeLifecycleConditions gate enabled — ALPHA and default-OFF in 1.37",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get --raw /metrics | /usr/bin/grep 'kubernetes_feature_enabled{name=\"NodeLifecycleConditions\"' | tail -1",
+      "assert": {
+        "matches": "name=\"NodeLifecycleConditions\".*\\} 1$"
+      }
+    },
+    {
+      "id": "apiserver-serves-the-beta-scheduling-group",
+      "describe": "the kubeadm patch LANDED: the rendered kube-apiserver command line carries the beta scheduling group in its runtime-config. A patch written in a superseded dialect is dropped by kind in silence, so a zero exit from create proves nothing about this flag",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kube-system get pod kube-apiserver-grid-core-control-plane -o jsonpath='{.spec.containers[0].command}'",
+      "assert": {
+        "contains": "scheduling.k8s.io/v1beta1=true"
+      }
+    },
+    {
+      "id": "beta-scheduling-group-is-actually-served",
+      "describe": "the consequence of the flag, read from the API rather than from the command line: the group answers and PodGroup is in its resource list. The flag and the served group are two different facts, and the gate without the group is the state that looks created and is dead",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get --raw /apis/scheduling.k8s.io/v1beta1",
+      "assert": {
+        "contains": "\"kind\":\"PodGroup\""
+      }
+    },
+    {
+      "id": "node-image-is-the-index-digest",
+      "describe": "the node container was created from the @sha256 index digest, not from a tag — the pin is the only control above the repository-to-registry boundary",
+      "run": "docker inspect -f '{{.Config.Image}}' grid-core-control-plane",
+      "assert": {
+        "contains": "@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
+      }
+    },
+    {
+      "id": "size-gate-helper-end-to-end",
+      "describe": "THE SIZE-CONDITIONAL ENTRY. The second worker exists only at SIZE=16, so at SIZE=8 the helper prints the fixed skip token and exits 0 and the alternation matches that instead. This is the one entry that exercises labs/tools/size-gate.sh end to end from a checks file",
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/tools/size-gate.sh 16 -- kubectl --context kind-grid-core get node grid-core-worker2 -o name",
+      "assert": {
+        "matches": "^node/grid-core-worker2$|^SIZE-GATE: skipped"
+      }
+    },
+    {
+      "id": "pinned-images-are-multi-architecture",
+      "describe": "THE ONE NETWORK-DEPENDENT CHECK IN THIS FILE, stated here so a reader debugging an offline failure does not have to find it by elimination. Every other entry reads the cluster or the local image store; this one reads each pinned image's manifest list out of its registry, which needs network access and roughly a minute of metadata round-trips. It asserts the PLATFORM LIST and is deliberately separate from the digest FORM, which STANDARDS.md C17 asserts statically with no network at all: one index digest has to resolve on an arm64 laptop and on an amd64 runner, and C17 only says the reference names an index, never that the index carries both. The helper reports a single-platform manifest as a finding naming the architecture it lacks, and PLATFORM_CHECK_SELFTEST=1 proves that bites against the one image in this project's set that genuinely ships amd64 only",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && bash labs/tools/platform-check.sh",
+      "assert": {
+        "matches": "^OK: [0-9]+ pinned image\\(s\\) checked"
+      }
+    }
+  ]
+}

@@ -37,7 +37,7 @@
 #
 # Env (match planning/lab-tests/spike-00-preflight.md on the build host):
 #   export PATH="/opt/homebrew/bin:$PATH"
-#   export KUBECONFIG=/tmp/spike-core.kubeconfig   # isolated; never touch other clusters
+#   export KUBECONFIG=/tmp/grid-core.kubeconfig   # isolated; never touch other clusters
 #
 # Idempotent: re-running re-applies the same pinned manifest and re-waits for
 # the rollout; nothing is duplicated and no Sandbox object is touched.
@@ -82,7 +82,7 @@ MANIFEST_SHA256="${MANIFEST_SHA256:-e89fd95c0aa57609fa24be4112bd52ce67fe8939ecf6
 # sha256:28a9cbdbfd6ac0a4e5c7e9261ace1aa30ee2da681cb640dccdfed98e8dd9d98b,
 # multi-arch with linux/arm64 present
 # (raw/spike-01/arm64/07-controller-image-platforms.log).
-CONTEXT="${CONTEXT:-kind-spike-core}"
+CONTEXT="${CONTEXT:-kind-grid-core}"
 NAMESPACE="${NAMESPACE:-agent-sandbox-system}"
 DEPLOYMENT="${DEPLOYMENT:-agent-sandbox-controller}"
 WORKDIR="${WORKDIR:-/tmp/313-agent-sandbox}"
@@ -152,7 +152,7 @@ fi
 
 if ! kc version --request-timeout=10s >/dev/null 2>&1; then
   echo "FAIL: cannot reach the cluster on context '${CONTEXT}'." >&2
-  echo "      Bring the profile up first: bash labs/clusters/spike-core/create.sh" >&2
+  echo "      Bring the profile up first: bash labs/clusters/grid-core/create.sh" >&2
   exit 1
 fi
 

@@ -1,0 +1,904 @@
+# GENERATED FILE — do not edit by hand.
+#
+# The object set addon-ops applies: a metrics collector, a dashboard
+# surface and a cost tool, rendered with
+#   helm template <release> <verified local archive> --values <section of values.yaml>
+# from the three charts below, each pulled at an exact version and each
+# verified against the manifest digest PINS.md records BEFORE the render:
+#
+#   prometheus: oci://ghcr.io/prometheus-community/charts/prometheus 29.36.2 @ sha256:26503341a6fe4a4c929ca15e65698219fd4f545dc49d7d53b0c0c3131e236653
+#   grafana: oci://ghcr.io/grafana/helm-charts/grafana 10.5.15 @ sha256:3d75dc3173c3fb07eaa8853283f38558c7c27259f7ed00cf8c096173667426a1
+#   opencost: oci://ghcr.io/opencost/charts/opencost 2.5.32 @ sha256:8163f17a34033a5d8ea79477eb2262088610e4a7ba1583077b06883f1e01fc16
+#
+# Regenerate with:
+#   bash labs/clusters/grid-core/addons/ops/create.sh
+#
+# It is committed so the applied object set is reviewable in the tree and
+# so the digest-pin gate has a real subject. A clean `git status` after a
+# create run is the evidence that this copy matches the charts at the
+# pinned versions. That property is why values.yaml sets the dashboard
+# admin password to a fixed non-secret literal: with it unset the chart
+# renders a random secret and this file would differ on every run.
+#
+# Every image reference below is a manifest-list INDEX digest resolved in
+# plan 03-06 and recorded in PINS.md with the command that resolved it,
+# its date and the platform list the manifest reported. No bundled
+# monitoring distribution is installed and no dashboard JSON is shipped.
+# ---- release: prometheus (oci://ghcr.io/prometheus-community/charts/prometheus 29.36.2 @ sha256:26503341a6fe4a4c929ca15e65698219fd4f545dc49d7d53b0c0c3131e236653) ----
+---
+# Source: prometheus/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.15.0
+    helm.sh/chart: prometheus-29.36.2
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+  namespace: grid-ops
+  annotations:
+    {}
+
+---
+# Source: prometheus/templates/cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.15.0
+    helm.sh/chart: prometheus-29.36.2
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+  namespace: grid-ops
+data:
+  allow-snippet-annotations: "false"
+  alerting_rules.yml: |
+    {}
+  alerts: |
+    {}
+  prometheus.yml: |
+    global:
+      evaluation_interval: 30s
+      scrape_interval: 30s
+      scrape_timeout: 10s
+    scrape_configs:
+    - job_name: prometheus
+      static_configs:
+      - targets:
+        - localhost:9090
+    - authorization:
+        credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        type: Bearer
+      job_name: kubernetes-apiservers
+      kubernetes_sd_configs:
+      - namespaces:
+          names:
+          - default
+        role: endpointslice
+      relabel_configs:
+      - action: keep
+        regex: default;kubernetes;https
+        source_labels:
+        - __meta_kubernetes_namespace
+        - __meta_kubernetes_service_name
+        - __meta_kubernetes_endpointslice_port_name
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: false
+    - job_name: grafana
+      static_configs:
+      - targets:
+        - grafana.grid-ops.svc.cluster.local:80
+    - job_name: opencost
+      static_configs:
+      - targets:
+        - opencost.grid-ops.svc.cluster.local:9003
+    rule_files: []
+  recording_rules.yml: |
+    {}
+  rules: |
+    {}
+---
+# Source: prometheus/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.15.0
+    helm.sh/chart: prometheus-29.36.2
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+      - ingresses
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - "networking.k8s.io"
+    resources:
+      - ingresses/status
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - "discovery.k8s.io"
+    resources:
+      - endpointslices
+    verbs:
+      - get
+      - list
+      - watch
+  - nonResourceURLs:
+      - "/metrics"
+    verbs:
+      - get
+
+---
+# Source: prometheus/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.15.0
+    helm.sh/chart: prometheus-29.36.2
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-server
+    namespace: grid-ops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-server
+
+---
+# Source: prometheus/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.15.0
+    helm.sh/chart: prometheus-29.36.2
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+  namespace: grid-ops
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 9090
+  selector:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+  sessionAffinity: None
+  type: "ClusterIP"
+---
+# Source: prometheus/templates/deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.15.0
+    helm.sh/chart: prometheus-29.36.2
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+  namespace: grid-ops
+spec:
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: prometheus
+  replicas: 1
+  revisionHistoryLimit: 10
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: prometheus-server
+      labels:
+        app.kubernetes.io/component: server
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/instance: prometheus
+        app.kubernetes.io/version: v3.15.0
+        helm.sh/chart: prometheus-29.36.2
+        app.kubernetes.io/part-of: prometheus
+    spec:
+      enableServiceLinks: true
+      serviceAccountName: prometheus-server
+      containers:
+        - name: prometheus-server-configmap-reload
+          image: "quay.io/prometheus-operator/prometheus-config-reloader@sha256:06b52bd4dbe3ed6dd5905aadaf8b9987d9da4c31d37bb86deaadae68cee2d26b"
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --watched-dir=/etc/config
+            - --listen-address=0.0.0.0:8080
+            - --reload-url=http://127.0.0.1:9090/-/reload
+          ports:
+            - containerPort: 8080
+              name: metrics
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+              scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+              scheme: HTTP
+            periodSeconds: 10
+          resources:
+            limits:
+              memory: 64Mi
+            requests:
+              cpu: 5m
+              memory: 16Mi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+              readOnly: true
+
+        - name: prometheus-server
+          image: "quay.io/prometheus/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --storage.tsdb.retention.time=2h
+            - --config.file=/etc/config/prometheus.yml
+            - --storage.tsdb.path=/data
+            - --web.console.libraries=/etc/prometheus/console_libraries
+            - --web.console.templates=/etc/prometheus/consoles
+            - --web.enable-lifecycle
+          ports:
+            - containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 4
+            failureThreshold: 3
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            - name: storage-volume
+              mountPath: /data
+              subPath: ""
+      dnsPolicy: ClusterFirst
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+      terminationGracePeriodSeconds: 300
+      volumes:
+        - name: config-volume
+          configMap:
+            name: prometheus-server
+        - name: storage-volume
+          emptyDir:
+            {}
+# ---- release: grafana (oci://ghcr.io/grafana/helm-charts/grafana 10.5.15 @ sha256:3d75dc3173c3fb07eaa8853283f38558c7c27259f7ed00cf8c096173667426a1) ----
+---
+# Source: grafana/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+automountServiceAccountToken: false
+metadata:
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+  name: grafana
+  namespace: grid-ops
+
+---
+# Source: grafana/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+    app.kubernetes.io/component: admin-secret
+type: Opaque
+data:
+  
+  admin-user: "YWRtaW4="
+  admin-password: "bm90LWEtc2VjcmV0LWxhYi1sb2NhbA=="
+  ldap-toml: ""
+
+---
+# Source: grafana/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+data:
+  
+  grafana.ini: |
+    [analytics]
+    check_for_updates = false
+    reporting_enabled = false
+    [log]
+    mode = console
+    [paths]
+    data = /var/lib/grafana/
+    logs = /var/log/grafana
+    plugins = /var/lib/grafana/plugins
+    provisioning = /etc/grafana/provisioning
+    [plugins]
+    preinstall_disabled = true
+    [server]
+    domain = ''
+    [unified_storage]
+    index_path = /var/lib/grafana-search/bleve
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - access: proxy
+      isDefault: true
+      name: Prometheus
+      type: prometheus
+      url: http://prometheus-server.grid-ops.svc.cluster.local:80
+
+---
+# Source: grafana/templates/clusterrole.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+  name: grafana-clusterrole
+rules: []
+
+---
+# Source: grafana/templates/clusterrolebinding.yaml
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: grafana-clusterrolebinding
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+subjects:
+  - kind: ServiceAccount
+    name: grafana
+    namespace: grid-ops
+roleRef:
+  kind: ClusterRole
+  name: grafana-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Source: grafana/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grafana
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+rules: []
+
+---
+# Source: grafana/templates/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: grafana
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: grafana
+subjects:
+- kind: ServiceAccount
+  name: grafana
+  namespace: grid-ops
+
+---
+# Source: grafana/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+spec:
+  type: ClusterIP
+  ports:
+    - name: service
+      port: 80
+      protocol: TCP
+      targetPort: grafana
+  selector:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+
+---
+# Source: grafana/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "13.2.3"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+      app.kubernetes.io/instance: grafana
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: grafana-10.5.15
+        app.kubernetes.io/name: grafana
+        app.kubernetes.io/instance: grafana
+        app.kubernetes.io/version: "13.2.3"
+      annotations:
+        checksum/config: 8a44df50c2338aea42823b76cf4ef94b4280e160cd070199bebc23a001b32d26
+        checksum/sc-dashboard-provider-config: e70bf6a851099d385178a76de9757bb0bef8299da6d8443602590e44f05fdf24
+        checksum/secret: eb6a6db64e0283668ceaa937d4ef936df1e32d6d7f7a3716e65a6160a926bb5b
+        kubectl.kubernetes.io/default-container: grafana
+    spec:
+      
+      serviceAccountName: grafana
+      automountServiceAccountToken: true
+      shareProcessNamespace: false
+      securityContext:
+        fsGroup: 472
+        runAsGroup: 472
+        runAsNonRoot: true
+        runAsUser: 472
+      enableServiceLinks: true
+      containers:
+        - name: grafana
+          image: "docker.io/grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            privileged: false
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: config
+              mountPath: "/etc/grafana/grafana.ini"
+              subPath: grafana.ini
+            - name: storage
+              mountPath: "/var/lib/grafana"
+            - name: search
+              mountPath: "/var/lib/grafana-search"
+            - name: config
+              mountPath: "/etc/grafana/provisioning/datasources/datasources.yaml"
+              subPath: "datasources.yaml"
+          ports:
+            - name: grafana
+              containerPort: 3000
+              protocol: TCP
+            - name: gossip-tcp
+              containerPort: 9094
+              protocol: TCP
+            - name: gossip-udp
+              containerPort: 9094
+              protocol: UDP
+            - name: profiling
+              containerPort: 6060
+              protocol: TCP
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana
+                  key: admin-user
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana
+                  key: admin-password
+            - name: GF_PATHS_DATA
+              value: /var/lib/grafana/
+            - name: GF_PATHS_LOGS
+              value: /var/log/grafana
+            - name: GF_PATHS_PLUGINS
+              value: /var/lib/grafana/plugins
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+            - name: GF_UNIFIED_STORAGE_INDEX_PATH
+              value: /var/lib/grafana-search/bleve
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+          livenessProbe:
+            failureThreshold: 10
+            httpGet:
+              path: /api/health
+              port: grafana
+            initialDelaySeconds: 60
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: grafana
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: grafana
+        - name: storage
+          emptyDir: {}
+        - name: search
+          emptyDir: {}
+# ---- release: opencost (oci://ghcr.io/opencost/charts/opencost 2.5.32 @ sha256:8163f17a34033a5d8ea79477eb2262088610e4a7ba1583077b06883f1e01fc16) ----
+---
+# Source: opencost/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opencost
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: opencost-2.5.32
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: opencost
+    app.kubernetes.io/version: "1.121.3"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: true
+
+---
+# Source: opencost/templates/clusterrole.yaml
+# Cluster role giving opencost to get, list, watch required resources
+# No write permissions are required
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opencost
+  labels:
+    helm.sh/chart: opencost-2.5.32
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: opencost
+    app.kubernetes.io/version: "1.121.3"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - deployments
+      - nodes
+      - pods
+      - services
+      - resourcequotas
+      - replicationcontrollers
+      - limitranges
+      - persistentvolumeclaims
+      - persistentvolumes
+      - namespaces
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - statefulsets
+      - deployments
+      - daemonsets
+      - replicasets
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - cronjobs
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - autoscaling
+    resources:
+      - horizontalpodautoscalers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - policy
+    resources:
+      - poddisruptionbudgets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - storage.k8s.io
+    resources:
+      - storageclasses
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+# Source: opencost/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opencost
+  labels:
+    helm.sh/chart: opencost-2.5.32
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: opencost
+    app.kubernetes.io/version: "1.121.3"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opencost
+subjects:
+  - kind: ServiceAccount
+    name: opencost
+    namespace: grid-ops
+---
+# Source: opencost/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencost
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: opencost-2.5.32
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: opencost
+    app.kubernetes.io/version: "1.121.3"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: opencost
+  type: "ClusterIP"
+  ports:
+    - name: http
+      port: 9003
+      targetPort: 9003
+    - name: mcp-server
+      port: 8081
+      targetPort: 8081
+---
+# Source: opencost/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencost
+  namespace: grid-ops
+  labels:
+    helm.sh/chart: opencost-2.5.32
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: opencost
+    app.kubernetes.io/version: "1.121.3"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    checksum/configs: f9279e14afdda545be005e99bed7e13ad4d3093d838574369d4aeca0a6981ff9
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost
+      app.kubernetes.io/instance: opencost
+  strategy: 
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opencost
+        app.kubernetes.io/instance: opencost
+    spec:
+      serviceAccountName: opencost
+      automountServiceAccountToken: true
+      initContainers:
+      containers:
+        - name: opencost
+          image: ghcr.io/opencost/opencost:1.121.3@sha256:4cdd173253e5abba048dfe2cfa968707a5b59d774157d5356940d0d923a6c281
+          imagePullPolicy: IfNotPresent
+          args:
+          ports:
+            - containerPort: 9003
+              name: http
+            - containerPort: 8081
+              name: mcp-server
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 1
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 1
+            successThreshold: 1
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: CUSTOM_COST_ENABLED
+              value: "false"
+            - name: INSTALL_NAMESPACE
+              value: grid-ops
+            - name: PROMETHEUS_QUERY_RESOLUTION_SECONDS
+              value: "300"
+            - name: API_PORT
+              value: "9003"
+            - name: PROMETHEUS_SERVER_ENDPOINT
+              value: "http://prometheus-server.grid-ops.svc.cluster.local:80"
+            - name: INSECURE_SKIP_VERIFY
+              value: "false"
+            - name: CLUSTER_ID
+              value: "default-cluster"
+            - name: RESOLUTION_1D_RETENTION
+              value: "15"
+            - name: RESOLUTION_1H_RETENTION
+              value: "49"
+            - name: CLOUD_COST_ENABLED
+              value: "false"
+            - name: CLOUD_COST_MONTH_TO_DATE_INTERVAL
+              value: "6"
+            - name: CLOUD_COST_REFRESH_RATE_HOURS
+              value: "6"
+            - name: CLOUD_COST_QUERY_WINDOW_DAYS
+              value: "7"
+            - name: CLOUD_COST_RUN_WINDOW_DAYS
+              value: "3"
+            # Add any additional provided variables
+            # MCP Server Configuration
+            - name: MCP_SERVER_ENABLED
+              value: "true"
+            - name: MCP_HTTP_PORT
+              value: "8081"

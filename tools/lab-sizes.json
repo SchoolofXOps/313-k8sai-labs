@@ -1,0 +1,25 @@
+{
+  "_generated": "GENERATED FILE — do not edit. A verbatim mirror of course.config.json's lab.sizes block, published beside size-gate.sh as tools/lab-sizes.json because course.config.json is not published. Regenerate: node scripts/lab-sizes.mjs --write",
+  "lab": {
+    "sizes": {
+      "8": {
+        "worker_nodes": 1,
+        "budget_mb": 4500,
+        "kwok_scale_nodes": 500,
+        "kwok_collision_nodes": 9
+      },
+      "16": {
+        "worker_nodes": 2,
+        "budget_mb": 9000,
+        "kwok_scale_nodes": 1000,
+        "kwok_collision_nodes": 9
+      },
+      "_why": "PLAT-04. The machine-size contract, fixed in STANDARDS.md § SIZE-GATE and read from here by every script that varies with the machine. Phase 2 shipped the size split as PROSE only, in lab.setup; prose is the second copy of a fact and this block is the first. PROVENANCE PER NUMBER, because three of them are not measured. worker_nodes: `kind create` has exactly one subcommand and no node-add path, so node count is create-time-immutable and this is the one axis that genuinely forks a cluster — 1 and 2 workers are [CITED: lab.setup, carried forward]. budget_mb for size 8 is 4500, [VERIFIED: labs/tools/measure.sh, where it is the documented default and named as the 8 GB-profile lab budget] and the figure every existing spike record was measured against. budget_mb for size 16 is 9000 and is [ASSUMED] — DERIVED, never measured: 4500 MiB against the authoring VM's reported 7.74 GiB (7926 MiB) is 56.8% of the machine, and 56.8% of a 15.5 GiB (15872 MiB) VM is 9015 MiB, rounded to 9000. No 16 GB profile has been measured, so this is a declared budget and not a reading. kwok_scale_nodes: 500 at size 8 is [VERIFIED: SPIKE-05, measured at 2568 MiB with 1212 pods]; 1000 at size 16 is [ASSUMED] — nothing has measured 1000 anywhere, and it stays inside the ROADMAP's corrected envelope rather than extending it. kwok_collision_nodes is DELIBERATELY 9 at both sizes and must not grow with the machine: the three-tenant quota collision M5 teaches is an accounting event bounded by arithmetic, not by RSS, and a larger fleet stops the collision being observable at all — enlarging it inverts which constraint binds, which is a silent invalidation of the experiment rather than a break.",
+      "default": 8,
+      "accepted": [
+        8,
+        16
+      ]
+    }
+  }
+}

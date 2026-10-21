@@ -73,7 +73,7 @@
 #               running containers. They are only the same word when the
 #               profile IS a cluster name. The four-path harness, for example,
 #               publishes under `storage-four-path` but runs on the
-#               `spike-core` nodes, so it needs FILTER=spike-core.
+#               `grid-core` nodes, so it needs FILTER=grid-core.
 #
 # `read` EXITS NON-ZERO when a profile matched no running container: a harness
 # that measured nothing must not report success.
@@ -117,8 +117,8 @@ usage() {
 # These are two different things and conflating them is WINDOWS #5. The profile
 # is the LABEL a reading is published under in a spike record
 # (`storage-four-path`); the filter is what actually names the running
-# containers (`spike-core`, whose nodes are spike-core-control-plane and
-# spike-core-worker). Plans 01-02 and 01-03 both reset against a profile label
+# containers (`grid-core`, whose nodes are grid-core-control-plane and
+# grid-core-worker). Plans 01-02 and 01-03 both reset against a profile label
 # that matched zero containers, which is why their .containers.baseline files
 # are 0 bytes. Defaulting the filter to the profile keeps every existing
 # single-word invocation working.
@@ -403,7 +403,7 @@ cmd_reset() {
   echo "  VM-wide high-water at reset: ${vm:-unmeasured} bytes"
   echo "  VM boot epoch at reset:      ${boot:-unknown}"
   echo "  node containers at reset:    ${n}"
-  # A zero match at RESET time is legitimate — `measure.sh run spike-core --
+  # A zero match at RESET time is legitimate — `measure.sh run grid-core --
   # bash create.sh` baselines before the cluster exists — so this warns rather
   # than failing. At READ time it is a hard failure: see cmd_read.
   if [ "${n}" -eq 0 ]; then
@@ -415,7 +415,14 @@ cmd_reset() {
 
 cmd_read() {
   local tsv profile rendered none
-  tsv="$(mktemp -t measure-rss)"
+  # A FULL TEMPLATE ENDING IN Xs, not `mktemp -t name` — GNU mktemp rejects a
+  # template with too few Xs, so the short form works on macOS and fails on
+  # Linux. Fixed here alongside the one CI actually caught in
+  # labs/storage/four-path/run.sh (run 38493328706), rather than waiting for
+  # this one to be caught too: this script is authoring-host-only TODAY, because
+  # it reads container cgroups through `rdctl shell`, but the form is wrong
+  # wherever it runs and a reader copying it would copy the defect.
+  tsv="$(mktemp "${TMPDIR:-/tmp}/measure-rss.XXXXXX")"
   for profile in "$@"; do
     collect_profile "${profile}" >> "${tsv}"
   done
@@ -437,7 +444,7 @@ cmd_read() {
     echo "FAIL: ${none} profile(s) matched no running container; nothing was" >&2
     echo "      measured for them. The profile label is a docker name pattern" >&2
     echo "      unless FILTER is set — e.g. the four-path harness runs on the" >&2
-    echo "      spike-core nodes, so it needs FILTER=spike-core." >&2
+    echo "      grid-core nodes, so it needs FILTER=grid-core." >&2
     return 1
   fi
 }

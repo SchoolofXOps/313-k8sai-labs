@@ -21,7 +21,7 @@
 #
 # API group note: RuntimeClass is STABLE on node.k8s.io/v1 -- it has been since
 # Kubernetes 1.20. It is not one of the gated beta APIs this course's
-# spike-core profile has to switch on, so no feature gate or --runtime-config
+# grid-core profile has to switch on, so no feature gate or --runtime-config
 # entry is involved here.
 #
 # Requires a node built from labs/sandbox/runsc-node/Dockerfile. Applying this
@@ -29,12 +29,21 @@
 # that uses it stays Pending or falls back -- the object's existence proves
 # nothing about the node.
 #
+# WHO APPLIES THIS, as of plan 03-04: labs/clusters/grid-sandbox/verify.sh,
+# which applies it and then proves it RESOLVED by reading the kernel identity
+# from inside a Pod. That profile is the only cluster in this course built
+# from the node image above, and it is a profile rather than an addon layer
+# for exactly the reason stated at the top of this file -- containerd reads
+# its config once, at start, so the handler this object names has to be in
+# the image before the cluster exists. STANDARDS.md section profile-set fixes
+# that admission test and the allowed profile set it produces.
+#
 # WR-06 -- two fields are deliberately absent, and the reasons are the lesson.
 #
 # `scheduling.nodeSelector` would make the silent-fallback failure described
 # above impossible: the scheduler would place a runsc Pod only on nodes
 # carrying the label. It is NOT set here because, in every profile this course
-# currently ships, nothing applies such a label -- `spike-core/create.sh`
+# currently ships, nothing applies such a label -- `grid-core/create.sh`
 # builds every node from one image, so either all nodes carry runsc or none
 # do, and CI creates a bare single-node cluster with no labels at all. A
 # selector matching no node does not harden anything; it strands every Pod in

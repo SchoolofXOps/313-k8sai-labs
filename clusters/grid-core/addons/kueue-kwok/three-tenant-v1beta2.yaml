@@ -1,0 +1,438 @@
+---
+# three-tenant-v1beta2.yaml — three tenants, one Cohort, and a quota collision
+# reached by BORROWING rather than by refusal.
+#
+# EVERY Kueue object here is on the v1beta2 group. Kueue v0.20.0 STOPPED SERVING
+# the superseded one: the API server reports that group as unserved and refuses
+# the object outright rather than warning about it. Measured live and quoted from
+# planning/lab-tests/raw/spike-04/kueue-install.log:
+#
+#     $ kubectl get crd clusterqueues.kueue.x-k8s.io -o jsonpath=...
+#     v1beta1 served=false storage=false
+#     v1beta2 served=true  storage=true
+#
+# The refusal of a superseded-group object is captured verbatim in
+# planning/lab-tests/raw/spike-04/kueue-apply.log — a server-side dry-run apply
+# answering `resource mapping not found`, `no matches for kind "ClusterQueue"`,
+# `ensure CRDs are installed first`. It is CITED rather than quoted here because
+# that line contains the string STANDARDS.md C9 bans from authored content, and
+# `labs/` is authored content and is never exempt — so a comment EXPLAINING the
+# ban would trip the check that enforces it. Field names changed with the group
+# too, not only the version string: a ClusterQueue joins a cohort through
+# `spec.cohortName` (a string), read off the live CRD with `kubectl explain`.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS IS A NEW FILE AND NOT AN EDIT, said before anything else
+# ---------------------------------------------------------------------------
+# labs/kwok/attach/kueue-v1beta2.yaml is SPIKE-04's measured artifact and its own
+# FLEET PRECONDITION block says that applying it against a fleet of a different
+# shape "silently invalidates the experiment rather than breaking it, which is
+# worse". Its quota is 48 cpu and is DELIBERATELY SLACK: there, topology was the
+# thing being proven, so quota had to be out of the way, and when its negative
+# control is refused, topology is the only thing that can have refused it.
+#
+# THIS experiment needs the exact inverse. Quota IS the thing being proven, so
+# quota must bind FIRST and capacity must be the thing that is out of the way.
+# Those two requirements cannot live in one file. So this file sits beside that
+# one and that one is left exactly as it was measured, byte for byte, so M5's
+# rack-versus-block teaching pair keeps its evidence.
+#
+# ---------------------------------------------------------------------------
+# FLEET PRECONDITION — the arithmetic, re-derived, every row checkable
+# ---------------------------------------------------------------------------
+# REQUIRED FLEET:  FAKE_NODES=9  RACKS_PER_BLOCK=3  NODE_CPU=8  NODE_MEMORY=32Gi
+# i.e.             FLEET=collision at SIZE=8 or SIZE=16, which is
+#                  lab.sizes.<SIZE>.kwok_collision_nodes in course.config.json
+#
+#   free cpu per simulated node      7.9      MEASURED on the run that produced
+#                                             planning/lab-tests/03-addon-kueue-kwok.md:
+#                                             8 cpu allocatable, and kindnet
+#                                             requests 100m on every simulated node
+#                                             because it tolerates the taint.
+#                                             kube-proxy is also there and requests
+#                                             nothing.
+#   fleet                            9 nodes  3 topology blocks x 3 racks, ONE node
+#                                             per rack, rack label values GLOBALLY
+#                                             UNIQUE (rack-0..rack-8) so "stayed in
+#                                             one rack" cannot pass by coincidence
+#   free fleet capacity              71.1 cpu 9 x 7.9
+#   block domain capacity            23.7 cpu 3 x 7.9 — unchanged from the 6-node
+#                                             manifest, so its published arithmetic
+#                                             ports unaltered
+#   three tenants' nominal quota     63 cpu   3 x 21, STRICTLY BELOW 71.1, so quota
+#                                             runs out while 8.1 cpu of capacity is
+#                                             still unspent. This is the whole
+#                                             inversion relative to the 6-node file
+#   a tenant's own gang              22.5 cpu 3 pods x 7.5 cpu. EXCEEDS its own 21 cpu
+#                                             nominal by 1.5, so it can run ONLY by
+#                                             BORROWING a sibling's unused nominal.
+#                                             That borrowing is the collision
+#
+# What follows, and what was then MEASURED rather than predicted:
+#
+#   3 x 22.5 = 67.5 cpu of demand against 63 cpu of cohort nominal, so TWO tenants
+#   are admitted (45 cpu, each borrowing 1.5) and ONE is refused. At the moment of
+#   refusal the cohort has 18 cpu of unused nominal and the refused tenant needs
+#   22.5, so quota refuses — while the FLEET still has 23.7 cpu free on three idle
+#   nodes, which is MORE than the 22.5 the refused tenant asked for.
+#
+#   That gap is the point. The negative control is refused BY QUOTA at a moment
+#   when CAPACITY WOULD HAVE HOSTED IT. Without that gap the refusal is ambiguous,
+#   and an ambiguous negative control proves nothing.
+#
+# WHAT CHANGING ANY OF IT DOES. A different fleet shape does not break this
+# experiment, it INVALIDATES it, and nothing in the output says so:
+#   - a BIGGER fleet raises free capacity, so the collision is still reached by
+#     quota but the lab stops being able to show capacity as the slack one;
+#   - a SMALLER fleet drops free capacity below the cohort nominal, and then the
+#     refused tenant is refused by capacity as well as by quota — the two
+#     constraints become indistinguishable while every command still exits 0;
+#   - a bigger GANG does the same thing from the other side. This was MEASURED,
+#     not reasoned: see the two corrections below.
+#
+# ---------------------------------------------------------------------------
+# TWO CORRECTIONS TO THE DERIVATION THIS FILE INHERITED
+# ---------------------------------------------------------------------------
+# Research proposed a gang of 3 pods x 8 cpu = 24 cpu. Both halves of that were
+# tested live on the 9-node fleet before this file was written, and the row was
+# corrected rather than the fleet being fitted to it. Full captures in
+# planning/lab-tests/03-addon-kueue-kwok.md.
+#
+# 1. A POD REQUESTING 8 CPU DOES NOT FIT A SIMULATED NODE. Each node is 8 cpu
+#    allocatable and kindnet already holds 100m of it, so 7.9 is free and an 8 cpu
+#    pod fits nowhere. Measured: Kueue ADMITTED two such gangs on quota, and the
+#    real kube-scheduler then refused every pod with
+#    `0/11 nodes are available: ... 9 Insufficient cpu`. The quota arithmetic was
+#    right; the PLACEMENT arithmetic was not. A lab in that state reports
+#    `Admitted=True`, shows the borrowing correctly, and runs nothing.
+#
+# 2. EVEN IGNORING PLACEMENT, 24 CPU MAKES THE NEGATIVE CONTROL AMBIGUOUS. At
+#    24 cpu per tenant two are admitted (48 cpu), leaving 15 cpu of cohort nominal
+#    and 23.1 cpu of fleet capacity against a 24 cpu demand — so quota and capacity
+#    are BOTH short and the refusal cannot be attributed. 22.5 cpu is chosen
+#    because it is the shape that puts the refusal strictly between the two:
+#    18 cpu of quota left, 23.7 cpu of capacity left, 22.5 cpu asked for.
+#
+# ---------------------------------------------------------------------------
+# WHY StatefulSets AND NOT Jobs — measured, not preferred
+# ---------------------------------------------------------------------------
+# A Job-owned gang CANNOT hold quota on this platform. kwok's `pod-complete`
+# lifecycle stage selects on `.metadata.ownerReferences.[].kind In [Job]` and
+# transitions those pods straight to `Succeeded`, so a Job is admitted, completes
+# in milliseconds, releases its quota, and the next tenant is admitted into the
+# space it just freed. Measured: all three tenants were admitted and all three
+# reported `Finished=True/Succeeded`, every one of them landing on the SAME three
+# nodes — three tenants that never once collided, in a run that looked entirely
+# successful.
+#
+# A StatefulSet's pods are not Job-owned, so kwok leaves them Running and the
+# quota stays held. Kueue's `statefulset` integration is in the default framework
+# list this layer's kueue-values.yaml carries, and it admits the StatefulSet AS A
+# UNIT — one Workload for the three replicas — which is the all-or-nothing
+# property this experiment needs from a gang.
+#
+# ---------------------------------------------------------------------------
+# NO TOPOLOGY CONSTRAINT HERE, AND THAT IS THE POINT
+# ---------------------------------------------------------------------------
+# The ResourceFlavor below deliberately sets NO `topologyName`, and these gangs
+# carry no `podset-required-topology` annotation. A flavor pointing at a Topology
+# would make topology a possible refuser, and then a refused tenant could have
+# been refused by topology rather than by quota — exactly the ambiguity the 6-node
+# manifest avoids in the opposite direction by making its quota slack. Topology is
+# taught by tas-gangs-v1beta2.yaml, on the same fleet; quota is taught here.
+#
+# ---------------------------------------------------------------------------
+# WHAT IS NOT GUARANTEED, AND MUST NOT BE TAUGHT AS IF IT WERE
+# ---------------------------------------------------------------------------
+# All three tenants have EQUAL claim on the same borrowable quota: same nominal,
+# same demand, same cohort, no WorkloadPriorityClass, no fair-sharing weights.
+# NOTHING IN KUEUE GUARANTEES WHICH TWO WIN AND WHICH ONE QUEUES. The observed
+# run refused tenant-c, and that is an observation and not a rule — it can change
+# between Kueue minors, between submission orders, and between runs.
+#
+# So the lab asserts only the properties that ARE guaranteed:
+#   - at least one tenant is admitted BY BORROWING (its reservation exceeds its
+#     own nominal, visible as a non-zero `borrowed` in the queue's status);
+#   - the total borrowed does not exceed the total lent;
+#   - the total admitted does not exceed free fleet capacity;
+#   - exactly one tenant is refused, and refused for QUOTA.
+# It does NOT assert which one. A check naming a particular winner would be
+# asserting an implementation detail, and it would go red on a Kueue upgrade that
+# changed nothing a learner cares about.
+#
+# ---------------------------------------------------------------------------
+# PREREQUISITES
+# ---------------------------------------------------------------------------
+#   bash labs/clusters/grid-core/create.sh
+#   bash labs/clusters/grid-core/addons/dra/create.sh
+#   TAS_GANGS=none bash labs/clusters/grid-core/addons/kueue-kwok/create.sh
+#   kubectl apply -f labs/clusters/grid-core/addons/kueue-kwok/three-tenant-v1beta2.yaml
+#
+# TAS_GANGS=none IS NOT OPTIONAL FOR A CLEAN READING. The layer's own gang set
+# reserves 24 cpu of the fleet, and the arithmetic above compares the refused
+# tenant's demand against FREE capacity. With those gangs running, free capacity
+# is 47.1 rather than 71.1 and the "capacity would have hosted it" half of the
+# negative control stops being true.
+#
+# Nothing here is a GPU. The nodes are SIMULATED, no device of any kind is
+# modelled by this file, and the resource being contended is plain cpu. The
+# synthetic devices this course does model are accounted through the quota
+# resource name in this layer's kueue-values.yaml.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    app.kubernetes.io/part-of: addon-kueue-kwok
+    grid.schoolofxops.io/tenant: "a"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-b
+  labels:
+    app.kubernetes.io/part-of: addon-kueue-kwok
+    grid.schoolofxops.io/tenant: "b"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-c
+  labels:
+    app.kubernetes.io/part-of: addon-kueue-kwok
+    grid.schoolofxops.io/tenant: "c"
+---
+# The borrowing group. It carries NO resourceGroups on purpose: a Cohort with its
+# own nominalQuota ADDS capacity to the group, which would change the 63 cpu total
+# the arithmetic above rests on. This object exists to declare the group and
+# nothing else — the three ClusterQueues join it by name through spec.cohortName.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: Cohort
+metadata:
+  name: grid-tenants
+---
+# Binds quota to the SIMULATED fleet and nothing else.
+#   nodeLabels  -> Kueue adds this as a nodeSelector to admitted pods, so the real
+#                  kind worker can never satisfy this flavor's quota.
+#   tolerations -> Kueue adds these to admitted pods, which is how a workload opts
+#                  in to the NoSchedule taint every simulated node carries.
+#                  Without it an admitted pod is unschedulable forever.
+# NO topologyName — see the section above. Topology must not be able to refuse
+# anything here, or the negative control stops meaning quota.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: tenant-simulated
+spec:
+  nodeLabels:
+    type: kwok
+  tolerations:
+    - key: kwok.x-k8s.io/node
+      operator: Equal
+      value: fake
+      effect: NoSchedule
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: tenant-a-cq
+spec:
+  namespaceSelector: {}
+  # The borrowing group. Siblings' UNUSED nominal is what a tenant over its own
+  # quota draws on; borrowingLimit is left null, which means no limit beyond what
+  # the cohort actually has spare.
+  cohortName: grid-tenants
+  # BestEffortFIFO, stated explicitly rather than relied on as the default: the
+  # refused tenant sits in its queue permanently un-admitted, and under StrictFIFO
+  # it would block everything behind it — so a later submission would look refused
+  # for the wrong reason.
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: tenant-simulated
+          resources:
+            # 21 cpu: one third of 63, and 63 is strictly below the fleet's 71.1
+            # free cpu so that quota runs out first. See the arithmetic block.
+            - name: "cpu"
+              nominalQuota: "21"
+            # Deliberately far slack. The fleet has ~287Gi free, each gang asks
+            # 6Gi, and three tenants at 64Gi nominal total 192Gi — so memory can
+            # never be the binding constraint and CPU is unambiguously what is
+            # being contended. A second binding resource would make the refusal
+            # as ambiguous as a wrong fleet size does.
+            - name: "memory"
+              nominalQuota: 64Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: tenant-b-cq
+spec:
+  namespaceSelector: {}
+  cohortName: grid-tenants
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: tenant-simulated
+          resources:
+            - name: "cpu"
+              nominalQuota: "21"
+            - name: "memory"
+              nominalQuota: 64Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: tenant-c-cq
+spec:
+  namespaceSelector: {}
+  cohortName: grid-tenants
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: tenant-simulated
+          resources:
+            - name: "cpu"
+              nominalQuota: "21"
+            - name: "memory"
+              nominalQuota: 64Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: tenant-a-lq
+  namespace: tenant-a
+spec:
+  clusterQueue: tenant-a-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: tenant-b-lq
+  namespace: tenant-b
+spec:
+  clusterQueue: tenant-b-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: tenant-c-lq
+  namespace: tenant-c
+spec:
+  clusterQueue: tenant-c-cq
+---
+# THE THREE TENANT GANGS. Identical in every respect, which is what makes the
+# "which one loses is not guaranteed" statement above true rather than rhetorical.
+#
+# 3 replicas x 7.5 cpu = 22.5 cpu, against a 21 cpu nominal. Each replica fits a
+# simulated node with 0.4 cpu to spare; the gang as a whole does not fit its own
+# tenant's quota, so it runs only by borrowing.
+#
+# A StatefulSet rather than a Job, because kwok completes Job-owned pods
+# instantly and a completed gang holds no quota — measured, see the section above.
+# The queue-name LABEL on the StatefulSet is what hands admission to Kueue.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tenant-a-gang
+  namespace: tenant-a
+  labels:
+    kueue.x-k8s.io/queue-name: tenant-a-lq
+spec:
+  replicas: 3
+  serviceName: tenant-a-gang
+  selector:
+    matchLabels:
+      app: tenant-a-gang
+  template:
+    metadata:
+      labels:
+        app: tenant-a-gang
+    spec:
+      # Explicit as well as flavor-supplied: the toleration is the only reason a
+      # pod may be placed on a node that has no kubelet.
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: gang
+          # Never pulled in practice: these pods only land on simulated nodes,
+          # where kwok fakes the kubelet and no image is fetched. Digest-pinned
+          # anyway — the "never pulled" reasoning holds only while the flavor's
+          # nodeLabels and the NoSchedule taint both do their job, and PLAT-01
+          # applies to the whole lab surface. Index (manifest-list) digest, so one
+          # pin serves arm64 and amd64, and it is already in a kind v1.37 node's
+          # containerd store so it pulls nothing.
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "7500m"
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tenant-b-gang
+  namespace: tenant-b
+  labels:
+    kueue.x-k8s.io/queue-name: tenant-b-lq
+spec:
+  replicas: 3
+  serviceName: tenant-b-gang
+  selector:
+    matchLabels:
+      app: tenant-b-gang
+  template:
+    metadata:
+      labels:
+        app: tenant-b-gang
+    spec:
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: gang
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "7500m"
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tenant-c-gang
+  namespace: tenant-c
+  labels:
+    kueue.x-k8s.io/queue-name: tenant-c-lq
+spec:
+  replicas: 3
+  serviceName: tenant-c-gang
+  selector:
+    matchLabels:
+      app: tenant-c-gang
+  template:
+    metadata:
+      labels:
+        app: tenant-c-gang
+    spec:
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: gang
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "7500m"
+              memory: 2Gi

@@ -1,0 +1,44 @@
+{
+  "_why": "PLAT-03, PLAT-04. The grid-sandbox PROFILE's checks file. It lives here beside the script triple rather than at labs/mN/checks.json — that second path is the MODULE checks path C1 and C6 read for truth_contract, and a profile is not a module, so this file carries no Truth Contract tag at all. EVERY ENTRY ASSERTS OBJECT STATE AND NONE ASSERTS A PERFORMANCE NUMBER (TRUST-06): a throughput or latency figure asserted by a learner's own checks file fails on a slower laptop and teaches the learner that the course is wrong. THE ENTRY THAT EARNS THIS FILE ITS KEEP IS probe-pod-reports-the-sandbox-kernel, and the reason is the reason the whole profile exists: a RuntimeClass is only a NAME, and if containerd does not know a handler by that name it serves the Pod with the DEFAULT RUNTIME while the Pod still reaches Running. A create that exits 0, a Ready node and a Running Pod are byte-identical between the sandboxed and the fallen-back case, so NO ASSERTION MADE FROM OUTSIDE THE POD CAN TELL THEM APART. The kernel identity read from inside is the only evidence, and that entry reads it. A CAPABILITY DIFFERENTIAL IS DELIBERATELY NOT ASSERTED ANYWHERE HERE: 'this file is unreadable inside and readable outside, therefore it is isolated' is an overclaim SPIKE-01's own 'What the probe does not establish' section forbids — the differential shows a DIFFERENT KERNEL, which is an identity fact, and says nothing about kernel escapes, side channels or supply chain. matches is preferred over absent throughout, because the runner merges stderr into stdout and an absent assertion fails the moment any unrelated warning carries the forbidden substring. EVERY kubectl RUN SETS KUBECONFIG ITSELF, and that is a measured requirement rather than belt-and-braces: create.sh exports KUBECONFIG=/tmp/grid-sandbox.kubeconfig, but an export inside a script dies with the script, so the learner's own shell has no context and a bare `kubectl --context kind-grid-sandbox` fails with `context was not found`. THE NODE IMAGE IS ASSERTED BY TAG AND THAT IS THE ONE ENUMERATED DIGEST-PIN EXEMPTION: the image is built on the learner's own machine by labs/sandbox/runsc-node/build.sh, never pulled and never published, so there is no registry round-trip for a digest to protect — its own BASE is pinned by index digest inside that Dockerfile. PATH NOTE for plan 03-10: the one run that needs the shared helper resolves the repository root with git and then references labs/tools/...; the public labs tree strips the labs/ prefix for the Grid spine, so the sync path owns reconciling that.",
+  "checks": [
+    {
+      "id": "nodes-match-requested-size",
+      "describe": "the node count READ FROM THE CLUSTER equals 1 control-plane + lab.sizes.<SIZE>.worker_nodes — read, never taken from SIZE, because one cluster name serves both sizes",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && bash -c 'set -eu; export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\"; . labs/tools/size-gate.sh; assert_size; want=$((1 + $(size_value worker_nodes))); got=$(kubectl --context kind-grid-sandbox get nodes --no-headers | wc -l | tr -d \" \"); printf \"node-count got=%s want=%s\\n\" \"$got\" \"$want\"'",
+      "assert": { "matches": "^node-count got=([0-9]+) want=\\1$" }
+    },
+    {
+      "id": "kubelet-version-is-the-pin",
+      "describe": "every kubelet reports the pinned Kubernetes 1.37 minor — the node image is built FROM a digest-pinned 1.37.0 base, so a different minor means a different base",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox get nodes -o jsonpath='{.items[*].status.nodeInfo.kubeletVersion}'",
+      "assert": { "matches": "v1\\.37\\." }
+    },
+    {
+      "id": "runtimeclass-object-exists-with-its-handler",
+      "describe": "the RuntimeClass object exists and its handler matches the containerd stanza name the node image registered. The object alone proves NOTHING about the node — applying it to a stock cluster succeeds too — which is why the next two entries exist",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox get runtimeclass runsc -o jsonpath='{.metadata.name}/{.handler}'",
+      "assert": { "matches": "^runsc/runsc$" }
+    },
+    {
+      "id": "containerd-in-the-node-knows-the-handler",
+      "describe": "the runtime handler is registered in the node's OWN containerd configuration, read from inside the node container. Asserted BEFORE the Pod entry so a failure there can distinguish a missing handler from a Pod-level problem — they have different remedies",
+      "weight": 2,
+      "run": "docker exec grid-sandbox-control-plane cat /etc/containerd/config.toml | /usr/bin/grep 'containerd.runtimes.runsc\\]' | tail -1",
+      "assert": { "matches": "containerd\\.runtimes\\.runsc\\]" }
+    },
+    {
+      "id": "probe-pod-reports-the-sandbox-kernel",
+      "describe": "THE ENTRY THAT EARNS THIS FILE ITS KEEP. A Pod under runtimeClassName: runsc reports the sandbox kernel identity read from INSIDE ITSELF. A Running phase proves nothing: a silent containerd fallback to the default runtime leaves the Pod Running and the cluster healthy and is indistinguishable from success anywhere outside the Pod. This is an IDENTITY assertion, never a security one",
+      "weight": 3,
+      "run": "bash -c 'set -eu; export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\"; K=\"kubectl --context kind-grid-sandbox\"; $K delete pod checks-runsc-probe --ignore-not-found --wait=true >/dev/null 2>&1 || true; printf \"%s\\n\" \"apiVersion: v1\" \"kind: Pod\" \"metadata: {name: checks-runsc-probe}\" \"spec:\" \"  runtimeClassName: runsc\" \"  restartPolicy: Never\" \"  tolerations: [{operator: Exists}]\" \"  containers:\" \"  - name: probe\" \"    image: busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e\" \"    command: [sh, -c, sleep 300]\" | $K apply -f - >/dev/null; $K wait --for=condition=Ready pod/checks-runsc-probe --timeout=180s >/dev/null; V=$($K exec checks-runsc-probe -- cat /proc/version); $K delete pod checks-runsc-probe --ignore-not-found --wait=false >/dev/null 2>&1 || true; printf \"in-pod /proc/version: %s\\n\" \"$V\"'",
+      "assert": { "matches": "^in-pod /proc/version: Linux version .*gvisor" }
+    },
+    {
+      "id": "node-image-is-the-local-build",
+      "describe": "the node container was created from the LOCALLY BUILT node image, which is the create-time-immutable decision that makes grid-sandbox a profile rather than an addon layer. Asserted by tag: the one enumerated exemption from the digest-pin rule, because this image is never pulled and never published",
+      "run": "docker inspect -f '{{.Config.Image}}' grid-sandbox-control-plane",
+      "assert": { "matches": "^313-grid-sandbox-node:v1\\.37\\.x-runsc$" }
+    }
+  ]
+}

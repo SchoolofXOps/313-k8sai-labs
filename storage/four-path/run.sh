@@ -41,22 +41,32 @@
 #
 # Usage:
 #   bash run.sh                                   # measure every path, RUNS reps each
+#   bash run.sh apply                             # APPLY ONLY: install the four paths, measure nothing
 #   PATHS="pvc hostpath" bash run.sh              # re-measure a subset in isolation
 #   SIZE_MB=512 RUNS=3 bash run.sh                # bigger payload, more reps
 #   bash run.sh teardown                          # delete the namespace and the host payload dir
 #
+# `apply` exists so the addon layer at labs/clusters/grid-core/addons/dataplane/
+# can DRIVE this harness rather than reimplement its manifests, its placeholder
+# substitution and its namespace-Terminating wait. It stops after the rollouts:
+# an apply that also measured would cost the serialized single-machine queue a
+# full four-path sweep every time the layer is applied, and the layer's job is to
+# install the paths rather than to publish figures. It does NOT regenerate
+# harness-config.md, because that file publishes the configuration a MEASUREMENT
+# was taken under and an apply takes none.
+#
 # Env (match planning/lab-tests/spike-00-preflight.md on the build host):
 #   export PATH="/opt/homebrew/bin:$PATH"          # /usr/local/bin/kind is a stale v0.32.0 shim
-#   export KUBECONFIG=/tmp/spike-core.kubeconfig   # isolated; never touch other clusters
+#   export KUBECONFIG=/tmp/grid-core.kubeconfig   # isolated; never touch other clusters
 #
 # Wrap it for peak RSS (D-15), which is how SPIKE-05's data accrues for free.
 # FILTER is required and is NOT optional polish: this harness publishes its
 # reading under the label `storage-four-path`, but the containers it actually
-# runs on are the spike-core kind nodes. Without FILTER the profile label is
+# runs on are the grid-core kind nodes. Without FILTER the profile label is
 # used as the docker name pattern, matches nothing, and the whole run is
 # `unmeasured` — which is how this very line came to be the invocation that
 # measured nothing. `measure.sh read` now exits non-zero in that case.
-#   FILTER=spike-core bash labs/tools/measure.sh run storage-four-path \
+#   FILTER=grid-core bash labs/tools/measure.sh run storage-four-path \
 #     -- bash labs/storage/four-path/run.sh
 #
 # Idempotent: re-running re-applies the manifests (server-side unchanged),
@@ -65,7 +75,7 @@
 set -euo pipefail
 
 # --- pinned-binary resolution -------------------------------------------------
-# Identical story to labs/clusters/spike-core/create.sh: on this build host a
+# Identical story to labs/clusters/grid-core/create.sh: on this build host a
 # stale /usr/local/bin/kind and a stale ~/.rd/bin/kubectl resolve FIRST from a
 # login shell, and an `export PATH` only lives as long as the shell that ran
 # it. So the script resolves the pinned binaries itself. Override with
@@ -101,8 +111,8 @@ RUNS="${RUNS:-2}"
 # claim the Lab Truth Contract forbids. See s3.yaml and harness-config.md.
 PATHS="${PATHS:-s3 nfs pvc hostpath}"
 NAMESPACE="${NAMESPACE:-spike-02}"
-CONTEXT="${CONTEXT:-kind-spike-core}"
-export KUBECONFIG="${KUBECONFIG:-/tmp/spike-core.kubeconfig}"
+CONTEXT="${CONTEXT:-kind-grid-core}"
+export KUBECONFIG="${KUBECONFIG:-/tmp/grid-core.kubeconfig}"
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -131,10 +141,10 @@ NFS_IMAGE="${NFS_IMAGE:-registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f
 #   nothing at run time, so no measurement depends on a package resolving.
 CLIENT_IMAGE="${CLIENT_IMAGE:-python@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a}"
 #   The node's extraMounts bind-mount target (declared create-time in
-#   labs/clusters/spike-core/create.sh) and its host side.
+#   labs/clusters/grid-core/create.sh) and its host side.
 HOSTPATH_HOST="${HOSTPATH_HOST:-/var/lib/313-spike-02-hostpath}"
 HOSTPATH_NODE="${HOSTPATH_NODE:-/mnt/spike-02-hostpath}"
-WORKER_NODE="${WORKER_NODE:-spike-core-worker}"
+WORKER_NODE="${WORKER_NODE:-grid-core-worker}"
 
 kc() { kubectl --context "${CONTEXT}" "$@"; }
 kcn() { kubectl --context "${CONTEXT}" -n "${NAMESPACE}" "$@"; }
@@ -255,8 +265,10 @@ cmd_teardown() {
 }
 
 if [ "${1:-}" = "teardown" ]; then cmd_teardown; exit 0; fi
+APPLY_ONLY=0
+if [ "${1:-}" = "apply" ]; then APPLY_ONLY=1; shift; fi
 if [ "${1:-}" != "" ]; then
-  echo "usage: bash run.sh [teardown]" >&2
+  echo "usage: bash run.sh [apply|teardown]" >&2
   exit 2
 fi
 
@@ -264,13 +276,13 @@ fi
 # preflight
 # -----------------------------------------------------------------------------
 kc cluster-info >/dev/null 2>&1 \
-  || fail "context '${CONTEXT}' does not answer. Create the cluster first: bash labs/clusters/spike-core/create.sh"
+  || fail "context '${CONTEXT}' does not answer. Create the cluster first: bash labs/clusters/grid-core/create.sh"
 
 kc get node "${WORKER_NODE}" >/dev/null 2>&1 \
   || fail "worker node '${WORKER_NODE}' not found; the hostpath path needs the node that carries the extraMount."
 
 docker exec "${WORKER_NODE}" sh -c "test -d '${HOSTPATH_NODE}'" >/dev/null 2>&1 \
-  || fail "'${HOSTPATH_NODE}' is not present inside ${WORKER_NODE}. extraMounts is CREATE-TIME-ONLY — add it to labs/clusters/spike-core/create.sh and recreate the cluster: bash labs/clusters/spike-core/teardown.sh && bash labs/clusters/spike-core/create.sh"
+  || fail "'${HOSTPATH_NODE}' is not present inside ${WORKER_NODE}. extraMounts is CREATE-TIME-ONLY — add it to labs/clusters/grid-core/create.sh and recreate the cluster: bash labs/clusters/grid-core/teardown.sh && bash labs/clusters/grid-core/create.sh"
 
 # A namespace that is still Terminating accepts `kubectl apply` without error
 # and then silently refuses to create any Pod — `apply` prints only
@@ -311,7 +323,16 @@ echo
 # -----------------------------------------------------------------------------
 # the probe — ONE measurement implementation, shipped to every client Pod
 # -----------------------------------------------------------------------------
-PROBE_PY="$(mktemp -t spike02probe)"
+# A FULL TEMPLATE ENDING IN Xs, not `mktemp -t name`. GNU mktemp rejects a
+# template with too few Xs, so the short form works on macOS and fails on Linux.
+# MEASURED 2026-10-14, CI run 38493328706, both arms:
+#   harness| mktemp: too few X's in template 'spike02probe'
+#   FAIL: the four-path harness's apply exited 1; the layer is not installed.
+# labs/clusters/grid-core/create.sh:265-267 already carries this rule, in those
+# words, for its own kind-config temp file. This script did not follow it, and
+# nothing read the rule across files — which is the whole reason the
+# cross-architecture CI matrix exists.
+PROBE_PY="$(mktemp "${TMPDIR:-/tmp}/spike02probe.XXXXXX")"
 cat > "${PROBE_PY}" <<'PROBE_EOF'
 #!/usr/bin/env python3
 """spike-02 four-path storage probe.
@@ -649,6 +670,19 @@ for p in ${PATHS}; do
   fi
 done
 
+# The `apply` boundary. Everything above installs; everything below MEASURES.
+# A caller that wanted the paths installed and nothing published stops here.
+if [ "${APPLY_ONLY}" = "1" ]; then
+  echo
+  echo "OK: four-path harness APPLIED — ${PATHS} installed in namespace ${NAMESPACE} (context ${CONTEXT})."
+  echo "  NO MEASUREMENT WAS TAKEN and harness-config.md was NOT regenerated: that file"
+  echo "  publishes the configuration a measurement was taken under, and this invocation"
+  echo "  took none."
+  echo "  measure the paths:  bash ${BASH_SOURCE[0]}"
+  echo "  remove them:        bash ${BASH_SOURCE[0]} teardown"
+  exit 0
+fi
+
 # -----------------------------------------------------------------------------
 # measure — strictly one path at a time, one rep at a time
 # -----------------------------------------------------------------------------
@@ -956,6 +990,38 @@ Every number is also **laptop-local**: it describes this VM, on this disk, on th
 nothing about what a learner's machine will produce. Whether M6.3 frames its claim as a
 four-technology comparison or a four-path-overhead comparison is Phase 6's authoring decision, not
 this harness's.
+
+## The two scope limits — MEASURED, and they bind what any lesson built on this harness may claim
+
+These are not caveats attached to the verdict; they are part of it. Each is a claim the lab **may
+not** make, and each carries the number that settles it. They are restated in
+\`labs/clusters/grid-core/addons/dataplane/verify.sh\`'s header so they travel with the layer rather
+than living only in a spike record.
+
+**1. No claim distinguishing the provisioned-volume path from the bind-mount path.** On this runtime
+the default StorageClass's provisioner resolves to a **bind mount, not a CSI data path**, so a claim
+on the default class costs *nothing measurable* against a raw node-directory volume here. The
+measured gap is **3.3% on write and 10.6% on read**, both far below the run-to-run spread the
+harness established for itself (57.2% on write, 23.1% on read). The honest lesson is the opposite of
+the expected one, and it has a direct operational consequence: reaching for a raw node-directory
+volume "for speed" on this runtime buys nothing and loses the volume lifecycle. The two paths are
+reported as **not distinguishable**, never as equal — that is a statement about this harness and
+this disk, not about the paths.
+
+**2. No absolute throughput figure presented as disk performance.** The guest cannot evict the
+host's page cache, so an absolute number measures the cache as much as the disk. Two properties
+*are* reproducible and they are what a lesson may rest on:
+
+- **The tier split.** Both local-filesystem paths beat both network-protocol paths, on write and on
+  read, in **16 of 16 measurements**. Within-tier ordering is **not** reproducible on this hardware
+  and must not be claimed — every observed swap was between the two members of one tier, never
+  across tiers.
+- **The cold first write on the network-filesystem path**, which is the most reproducible figure the
+  harness produced: **3.5 MiB/s in both independent runs**, identical to the published decimal,
+  across two separately provisioned volumes — and **69-125x slower than the same path's second
+  write**. The two local paths show no such penalty (1.0-1.3x). If one number is published from this
+  harness, publish that one: the path that gives a distributed-training lab its shared checkpoint
+  volume is roughly two orders of magnitude slower on its first write than on its second.
 CONFIG_EOF
 
 echo

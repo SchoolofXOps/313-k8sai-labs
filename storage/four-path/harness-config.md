@@ -4,7 +4,7 @@
 hand-maintained config drifts from the figures it is supposed to explain, and a storage figure
 without its harness configuration is not a measurement. Regenerate it by re-running the harness.
 
-Run id: `20261005T035329Z`
+Run id: `20261013T140109Z`
 
 ## Effective knobs
 
@@ -14,10 +14,10 @@ Run id: `20261005T035329Z`
 | `RUNS` | 2 | Repetitions per path within this invocation |
 | `PATHS` | `s3 nfs pvc hostpath` | Which paths this invocation measured |
 | `NAMESPACE` | `spike-02` | Namespace every object was created in |
-| `CONTEXT` | `kind-spike-core` | kubectl context (isolated `KUBECONFIG=/tmp/spike-core.kubeconfig`) |
+| `CONTEXT` | `kind-grid-core` | kubectl context (isolated `KUBECONFIG=/tmp/grid-core.kubeconfig`) |
 | `HOSTPATH_NODE` | `/mnt/spike-02-hostpath` | The node-side bind mount the hostpath path writes to |
 | `HOSTPATH_HOST` | `/var/lib/313-spike-02-hostpath` | Its host side, declared via `extraMounts` at cluster create |
-| `WORKER_NODE` | `spike-core-worker` | The node every client Pod runs on |
+| `WORKER_NODE` | `grid-core-worker` | The node every client Pod runs on |
 
 ## Images — every one pinned by `@sha256` index digest
 
@@ -66,30 +66,30 @@ property of this mount):
 
     /lib/modules -> /lib/modules (bind)
     /var/lib/313-spike-02-hostpath -> /mnt/spike-02-hostpath (bind)
-    /var/lib/docker/volumes/65ba48bfe093242d7d8bb5526cae8cb3c71d843d5f6c686f523527f40032284f/_data -> /var (volume)
+    /var/lib/docker/volumes/0d6e3152bce319cba29422267df2c188c58f006a88da087b402032acfea188f0/_data -> /var (volume)
     
 
 Filesystem types inside the node, measured not assumed:
 
     Filesystem     Type    1K-blocks     Used Available Use% Mounted on
-    /dev/vda1      ext4    102625208 41474860  55891136  43% /mnt/spike-02-hostpath
-    overlay        overlay 102625208 41474860  55891136  43% /
-    /dev/vda1      ext4    102625208 41474860  55891136  43% /var
+    /dev/vda1      ext4    102625208 71042780  26323216  73% /mnt/spike-02-hostpath
+    overlay        overlay 102625208 71042780  26323216  73% /
+    /dev/vda1      ext4    102625208 71042780  26323216  73% /var
 
 VM filesystem layout:
 
     Filesystem           Type       1K-blocks      Used Available Use% Mounted on
-    tmpfs                tmpfs        4060284    625660   3434624  15% /
-    /dev/vda1            ext4       102625208  41474860  55891136  43% /mnt/data
-    /dev/vda1            ext4       102625208  41474860  55891136  43% /mnt/data
-    /dev/vda1            ext4       102625208  41474860  55891136  43% /mnt/data
+    tmpfs                tmpfs        4060284    625664   3434620  15% /
+    /dev/vda1            ext4       102625208  71042788  26323208  73% /mnt/data
+    /dev/vda1            ext4       102625208  71042788  26323208  73% /mnt/data
+    /dev/vda1            ext4       102625208  71042788  26323208  73% /mnt/data
 
 NFS client kernel module state in the VM (the Ganesha server is userspace and needs no `nfsd`,
 but the NFS **client** mount performed by kubelet needs the `nfs` module in the VM kernel; the
 pinned `kindest/node` image does ship `/sbin/mount.nfs`, the userspace helper):
 
     nfs                   512000  2 nfsv4
-    sunrpc                659456 10 rpcsec_gss_krb5,auth_rpcgss,nfsv4,nfs,lockd
+    sunrpc                659456  8 rpcsec_gss_krb5,auth_rpcgss,nfsv4,nfs,lockd
 
 ## Cache-bypass mechanism — the single most likely way a harness like this lies
 
@@ -141,3 +141,35 @@ Every number is also **laptop-local**: it describes this VM, on this disk, on th
 nothing about what a learner's machine will produce. Whether M6.3 frames its claim as a
 four-technology comparison or a four-path-overhead comparison is Phase 6's authoring decision, not
 this harness's.
+
+## The two scope limits — MEASURED, and they bind what any lesson built on this harness may claim
+
+These are not caveats attached to the verdict; they are part of it. Each is a claim the lab **may
+not** make, and each carries the number that settles it. They are restated in
+`labs/clusters/grid-core/addons/dataplane/verify.sh`'s header so they travel with the layer rather
+than living only in a spike record.
+
+**1. No claim distinguishing the provisioned-volume path from the bind-mount path.** On this runtime
+the default StorageClass's provisioner resolves to a **bind mount, not a CSI data path**, so a claim
+on the default class costs *nothing measurable* against a raw node-directory volume here. The
+measured gap is **3.3% on write and 10.6% on read**, both far below the run-to-run spread the
+harness established for itself (57.2% on write, 23.1% on read). The honest lesson is the opposite of
+the expected one, and it has a direct operational consequence: reaching for a raw node-directory
+volume "for speed" on this runtime buys nothing and loses the volume lifecycle. The two paths are
+reported as **not distinguishable**, never as equal — that is a statement about this harness and
+this disk, not about the paths.
+
+**2. No absolute throughput figure presented as disk performance.** The guest cannot evict the
+host's page cache, so an absolute number measures the cache as much as the disk. Two properties
+*are* reproducible and they are what a lesson may rest on:
+
+- **The tier split.** Both local-filesystem paths beat both network-protocol paths, on write and on
+  read, in **16 of 16 measurements**. Within-tier ordering is **not** reproducible on this hardware
+  and must not be claimed — every observed swap was between the two members of one tier, never
+  across tiers.
+- **The cold first write on the network-filesystem path**, which is the most reproducible figure the
+  harness produced: **3.5 MiB/s in both independent runs**, identical to the published decimal,
+  across two separately provisioned volumes — and **69-125x slower than the same path's second
+  write**. The two local paths show no such penalty (1.0-1.3x). If one number is published from this
+  harness, publish that one: the path that gives a distributed-training lab its shared checkpoint
+  volume is roughly two orders of magnitude slower on its first write than on its second.

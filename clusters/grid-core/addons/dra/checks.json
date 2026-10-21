@@ -1,0 +1,66 @@
+{
+  "_why": "PLAT-04, PLAT-07, PLAT-08. An ADDON LAYER's checks file. It lives beside the layer's script triple at labs/clusters/grid-core/addons/dra/checks.json, not at labs/mN/checks.json — that second path is the MODULE checks path C1 and C6 read for truth_contract, and a layer is not a module, so this file carries no Truth Contract tag at all. Every entry asserts OBJECT STATE and none asserts a performance number: a throughput or latency figure asserted by a learner's own checks file fails on a slower laptop and teaches the learner that the course is wrong. No entry asserts a Pod PHASE either — a Running phase proves nothing about device allocation or device health, which is why the health entry reads pod.status.containerStatuses[].allocatedResourcesStatus instead. THE DEVICES ARE SYNTHETIC: the driver's own device names, its LATEST-GPU-MODEL string and its 80Gi `memory` capacity are Go constants in upstream's source and not readings of anything, which is why the one name this layer controls is renamed to sim-accelerator.example.com and why STANDARDS.md C15 requires a caption wherever that emitted text reaches a page. WHAT IS ASSERTED AND WHAT IS NOT: SC3 as amended asserts the DRIVER name on every slice plus a DeviceClass and CEL selector of the same name. It does NOT assert `sim-`-prefixed device names or a `simulated: true` attribute, because upstream publishes neither and a check written to the original wording could not pass — see planning/lab-tests/03-addon-dra.md for the six unproducible facts with their line citations. matches is preferred over absent and over contains for the aggregate entries, because the runner merges stderr into stdout and because a `matches` anchored with ^ and $ on a jq-computed summary line is the only form that fails over ZERO slices: `every slice reports the right driver` across an empty list is vacuously true, and a checks file that passes on an un-applied layer is this phase's named failure mode. EVERY kubectl RUN SETS KUBECONFIG ITSELF, measured on the base profile: create.sh exports KUBECONFIG=/tmp/grid-core.kubeconfig, but an export inside a script dies with the script, so the learner's own shell has no context and a bare `kubectl --context kind-grid-core` fails with `context was not found`. jq is required by the aggregate entries because they fold across every slice and every device, which jsonpath cannot do.",
+  "checks": [
+    {
+      "id": "every-slice-reports-the-sim-driver",
+      "describe": "the DISTINCT set of spec.driver values across every ResourceSlice is exactly the one renamed driver — the single fact SC3 was amended to assert, and the only half of PLAT-08 the platform can produce",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o json | jq -r '\"drivers=\" + ([.items[].spec.driver] | unique | join(\",\"))'",
+      "assert": { "matches": "^drivers=sim-accelerator\\.example\\.com$" }
+    },
+    {
+      "id": "deviceclass-carries-the-same-name",
+      "describe": "a DeviceClass named for the same driver exists — the chart derives both from the single driverName value, so this and the entry above cannot disagree unless two renders were mixed",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get deviceclasses.resource.k8s.io -o name",
+      "assert": { "contains": "deviceclass.resource.k8s.io/sim-accelerator.example.com" }
+    },
+    {
+      "id": "deviceclass-cel-selector-names-the-same-driver",
+      "describe": "the DeviceClass's CEL selector selects on the renamed driver. A selector naming a different driver matches no device and every claim against it stays Pending with no error on the claim itself",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get deviceclasses.resource.k8s.io sim-accelerator.example.com -o jsonpath='{.spec.selectors[0].cel.expression}'",
+      "assert": { "contains": "device.driver == 'sim-accelerator.example.com'" }
+    },
+    {
+      "id": "devices-per-slice-is-the-configured-count",
+      "describe": "the DISTINCT set of per-slice device counts is exactly the kubeletPlugin.numDevices the committed values.yaml sets, so no slice is short and none is doubled by a re-apply",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o json | jq -r '\"devices_per_slice=\" + ([.items[].spec.devices | length] | unique | map(tostring) | join(\",\"))'",
+      "assert": { "matches": "^devices_per_slice=8$" }
+    },
+    {
+      "id": "pcieroot-published-on-every-device",
+      "describe": "every synthetic device publishes a non-empty resource.kubernetes.io/pcieRoot attribute. The counts are printed as published/total and the assert uses a backreference, so a 0/0 cluster cannot satisfy it. The VALUE is not asserted: with pcieRoots empty the driver assigns two default roots round-robin by device index",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o json | jq -r --arg k resource.kubernetes.io/pcieRoot '\"pcieroot=\" + ([.items[].spec.devices[].attributes[$k].string | select(. != null and . != \"\")] | length | tostring) + \"/\" + ([.items[].spec.devices[]] | length | tostring)'",
+      "assert": { "matches": "^pcieroot=([1-9][0-9]*)/\\1$" }
+    },
+    {
+      "id": "running-plugin-is-on-the-pinned-digest",
+      "describe": "the imageID the kubelet actually resolved for the running plugin carries the pinned manifest-list index digest. The rendered manifest proves what was ASKED FOR; this proves what RAN, which is the half a written-only pin cannot show",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver get pod -l app.kubernetes.io/component=kubeletplugin -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'",
+      "assert": { "contains": "@sha256:c1488eb51e086bd6b885a667c7d059382844e54e5917a71bcf734c04edfbb62f" }
+    },
+    {
+      "id": "device-health-reported-healthy-in-pod-status",
+      "describe": "PLAT-07's signal is OBJECT STATE, not a metric: the KEP-4680 health field exists on the claiming Pod at status.containerStatuses[].allocatedResourcesStatus and reports the derived device Healthy in the steady state. The device is derived from the claim's own allocation result, never named, and no Pod phase is asserted anywhere. ResourceHealthStatus is beta and default-on from Kubernetes 1.36, so no extra feature gate is involved",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/clusters/grid-core/addons/dra/health-probe.sh steady",
+      "assert": { "matches": "\"health\":\\s*\"Healthy\"" }
+    },
+    {
+      "id": "health-probe-drives-both-transitions",
+      "describe": "the probe script exits 0, which it only does after driving Healthy -> Unhealthy -> Healthy through the DEMO-ONLY annotation override and reading each transition back from allocatedResourcesStatus. A one-way probe cannot tell a real signal from a device that was unhealthy all along, which is why the return transition is part of the same run",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/clusters/grid-core/addons/dra/health-probe.sh",
+      "assert": { "exit": 0 }
+    },
+    {
+      "id": "committed-rendered-manifest-is-fully-digest-pinned",
+      "describe": "PLAT-01 over the layer's own artifact, and the ONE entry here that needs no cluster: every image: line in the committed rendered-pinned.yaml carries an @sha256 digest. It counts the references as well as the unpinned ones, so a file with zero image lines — an empty or truncated render — cannot satisfy it either",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && sed -n 's/^[[:space:]]*image:[[:space:]]*\\(.*\\)$/\\1/p' labs/clusters/grid-core/addons/dra/rendered-pinned.yaml | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
+      "assert": { "matches": "^image_refs=[1-9][0-9]* unpinned=0$" }
+    }
+  ]
+}

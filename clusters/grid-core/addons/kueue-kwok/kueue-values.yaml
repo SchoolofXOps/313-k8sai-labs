@@ -1,0 +1,153 @@
+# addon-kueue-kwok — the committed chart values for Kueue v0.20.0.
+#
+# These values are rendered by create.sh with `helm template` against the OCI
+# chart `oci://registry.k8s.io/kueue/charts/kueue` at version 0.20.0, pulled to a
+# local archive whose digest is verified BEFORE the render. They are not a Helm
+# release's values: nothing installs this chart with `helm install`, because the
+# rendered object set is committed beside this file as kueue-rendered-pinned.yaml
+# so the thing that actually gets applied is reviewable in the tree.
+#
+# WHAT THIS FILE EXISTS FOR, in one sentence: it is the committed, checkable
+# artifact carrying the Kueue `Configuration` with its `deviceClassMappings`.
+# Everything else below is the chart's own default restated, and the next section
+# says why restating it is mandatory rather than tidy.
+#
+# ---------------------------------------------------------------------------
+# WHY THE WHOLE Configuration IS RESTATED HERE
+# ---------------------------------------------------------------------------
+# `managerConfig.controllerManagerConfigYaml` is a STRING, not a map. Helm
+# replaces a string value outright — it does not merge into it. So a values file
+# that set only the `resources:` block would not add a block to the chart's
+# Configuration, it would REPLACE the entire Configuration with a two-line
+# document, silently dropping the leader election, the client QPS/burst, the
+# webhook port, the controller concurrency and the whole `integrations.frameworks`
+# list. Dropping `batch/job` alone would make every gang Job in this course
+# invisible to Kueue: the Jobs would run straight to the scheduler with no
+# admission, which is a lab that looks like it works and teaches the opposite of
+# what it claims.
+#
+# Everything from `apiVersion:` down to the frameworks list is therefore the
+# chart's own v0.20.0 default, copied verbatim from kueue/values.yaml:123-192 of
+# the digest-verified archive, with only the commented-out stanzas omitted. The
+# ONE addition this course makes is the `resources.deviceClassMappings` block,
+# marked where it starts.
+#
+# ---------------------------------------------------------------------------
+# ORDERING — the one constraint in this phase that is NOT free
+# ---------------------------------------------------------------------------
+# The mapping below names a DeviceClass BY NAME. A Kueue `Configuration` whose
+# `deviceClassNames` names a DeviceClass that does not exist is accepted without
+# complaint — nothing resolves the name at config-load time — so the quota
+# resource simply never accounts anything and a `ClusterQueue` quota for it looks
+# satisfied because it was never consumed.
+#
+# Therefore: APPLY THE DRA LAYER FIRST.
+#
+#   bash labs/clusters/grid-core/addons/dra/create.sh      # creates the DeviceClass
+#   bash labs/clusters/grid-core/addons/kueue-kwok/create.sh
+#
+# The DeviceClass name is `sim-accelerator.example.com` and it is NOT a literal
+# invented here: the DRA layer's own values.yaml sets `driverName` to that string,
+# and the chart helper puts it on the registered driver, on the DeviceClass's
+# `metadata.name` and inside the DeviceClass's CEL selector together. create.sh
+# READS the name out of that file rather than repeating it, so the two layers
+# cannot drift apart. This is the BACKWARD half of the ordering reference; the
+# forward half is written in the DRA layer's own create.sh header, at the point it
+# binds.
+#
+# ---------------------------------------------------------------------------
+# WHAT `deviceClassMappings` ACTUALLY BINDS
+# ---------------------------------------------------------------------------
+# One or more DeviceClass names -> ONE Kueue quota resource name. That resource
+# name is what `ClusterQueue.nominalQuota` counts and what a `Workload`'s status
+# reports. Without the mapping, DRA devices are admitted UNCOUNTED: a tenant can
+# claim every synthetic device in the cluster while its ClusterQueue reports its
+# quota untouched, because Kueue never knew the claim consumed anything.
+#
+# Field paths, read at the v0.20.0 tag rather than from a blog:
+#   Configuration.Resources             apis/config/v1beta2/configuration_types.go:98-99
+#   Resources.DeviceClassMappings       apis/config/v1beta2/configuration_types.go:625-628
+#   DeviceClassMapping.Name             apis/config/v1beta2/configuration_types.go:676-693
+#   DeviceClassMapping.DeviceClassNames apis/config/v1beta2/configuration_types.go:695-702
+#   the config group itself             apis/config/v1beta2/groupversion_info.go:31
+#
+# NO `sources:` ENTRY, DELIBERATELY. The two optional accounting sources gate on
+# KUEUE feature gates rather than Kubernetes ones — `counter` needs
+# `KueueDRAIntegrationPartitionableDevices`, `capacity` needs
+# `KueueDRAIntegrationConsumableCapacity` — and upstream's own field comment says
+# an extended-resource request that resolves to a DeviceClass WITH sources
+# configured is marked inadmissible. Adding one would change admission behaviour
+# for a property this phase does not teach, so the mapping is left in its plain
+# form.
+#
+# THE DEVICES BEHIND THAT DeviceClass ARE SYNTHETIC. They are not accelerators,
+# there is no accelerator in this VM, and the quota resource name below counts
+# simulated devices. The `example.com` domain is deliberate: a learner reading
+# `ClusterQueue.nominalQuota` cannot mistake it for a vendor resource.
+---
+controllerManager:
+  manager:
+    image:
+      # Stated explicitly even though both match the chart default, because
+      # create.sh SUBSTITUTES a digest for this reference in the rendered output
+      # and asserts afterwards that no tag-form reference survived. The
+      # substitution needs the repository it is matching on to have a stated
+      # source, and `templates/manager/manager.yaml:60` renders
+      # `repository:tag` — so `tag` cannot carry a digest and the digest has to
+      # be substituted into the rendered manifest instead. Same shape as the DRA
+      # layer, for the same reason.
+      repository: registry.k8s.io/kueue/kueue
+      tag: v0.20.0
+
+managerConfig:
+  # The chart's v0.20.0 default Configuration, restated in full for the reason in
+  # the header, plus this course's one addition.
+  controllerManagerConfigYaml: |-
+    apiVersion: config.kueue.x-k8s.io/v1beta2
+    kind: Configuration
+    health:
+      healthProbeBindAddress: :8081
+    metrics:
+      bindAddress: :8443
+    webhook:
+      port: 9443
+    leaderElection:
+      leaderElect: true
+      resourceName: c1f6bfd2.kueue.x-k8s.io
+    controller:
+      groupKindConcurrency:
+        Job.batch: 5
+        Pod: 5
+        Workload.kueue.x-k8s.io: 10
+        LocalQueue.kueue.x-k8s.io: 5
+        Cohort.kueue.x-k8s.io: 1
+        ClusterQueue.kueue.x-k8s.io: 5
+        ResourceFlavor.kueue.x-k8s.io: 1
+    clientConnection:
+      qps: 300
+      burst: 500
+    integrations:
+      frameworks:
+      - "batch/job"
+      - "kubeflow.org/mpijob"
+      - "ray.io/rayjob"
+      - "ray.io/rayservice"
+      - "ray.io/raycluster"
+      - "jobset.x-k8s.io/jobset"
+      - "workload.codeflare.dev/appwrapper"
+      - "trainer.kubeflow.org/trainjob"
+      - "pod"
+      - "deployment"
+      - "statefulset"
+      - "leaderworkerset.x-k8s.io/leaderworkerset"
+    # ---- THIS COURSE'S ONE ADDITION STARTS HERE ----------------------------
+    # The DRA <-> quota seam. `name` is what ClusterQueue.nominalQuota counts and
+    # what Workload status reports; `deviceClassNames` enumerates the
+    # DeviceClasses that resource name represents. The DeviceClass named here is
+    # created by labs/clusters/grid-core/addons/dra/ and MUST EXIST FIRST — see
+    # the ORDERING section in this file's header.
+    resources:
+      deviceClassMappings:
+      - name: example.com/sim-accelerator
+        deviceClassNames:
+        - sim-accelerator.example.com

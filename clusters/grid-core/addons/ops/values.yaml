@@ -1,0 +1,380 @@
+# addon-ops — the committed chart values for the three releases of the
+# OPERATIONS layer: a metrics collector, a dashboard surface and a cost tool.
+#
+# ONE FILE, THREE SECTIONS, AND HOW create.sh READS IT. Each top-level key below
+# is one Helm release's values tree. `create.sh` extracts a section by its
+# top-level key and de-indents it by two spaces before handing it to
+# `helm template`. The extraction is line-based (awk) and deliberately uses NO
+# YAML library: a learner who clones the public labs repository has no
+# `node_modules`, and `labs/tools/size-gate.sh` already set the precedent that a
+# lab script reads structured config with the pinned runtime's own parser or not
+# at all. Two consequences you must honour when editing this file:
+#
+#   1. every comment INSIDE a section is indented. A comment at column 0 inside
+#      a section would end that section's block.
+#   2. the three top-level keys are the only lines allowed at column 0.
+#
+# EVERY IMAGE IS A MANIFEST-LIST INDEX DIGEST, AND EVERY ONE IS EXPRESSIBLE HERE.
+# All three charts can take a digest in their own values — `server.image.digest`
+# and `configmapReload.prometheus.image.digest` for the collector, `image.sha`
+# for the dashboard, and the exporter's `tag` field for the cost tool, whose
+# upstream default is already digest-pinned. So nothing in this layer is left to
+# a render-step substitution and NO image here is a bare tag. `create.sh` still
+# asserts post-render that no tag-form reference survived, because a write with
+# no check is a pin that is written rather than applied.
+#
+# The digests, their human versions, the command that resolved each one, the
+# resolution date and the platform list each manifest reported are in PINS.md
+# beside this file. That register is the authority; these are copies of it.
+#
+# WHY THIS IS THREE SLIM RELEASES AND NOT THE BUNDLED MONITORING DISTRIBUTION.
+# The reason is measured, not preferred, and it is written out in full in
+# PINS.md § "Why the bundled monitoring distribution is not installed". In one
+# line: the declared-minimum lab budget is 4500 MiB, the base profile at rest
+# with its three feature gates measures 1908 MiB, and the bundled distribution
+# adds an operator, an alert manager, a node exporter per node, a
+# kube-state-metrics deployment and a default rule set — several of which this
+# course never reads.
+#
+# RETENTION, RESOURCE REQUESTS AND PERSISTENCE ARE SET EXPLICITLY IN ALL THREE
+# SECTIONS, and the budget above is the stated reason in each. Persistence is
+# OFF everywhere: a profile is torn down at the end of every lab, so a volume
+# that outlives the cluster is state the Grid repository is supposed to carry
+# instead.
+#
+# THE SCRAPE LIST IS A CARDINALITY BUDGET. The collector scrapes the base
+# cluster's API server and this layer's own three components, and nothing else.
+# A default-everything scrape configuration on a 4500 MiB budget is the kind of
+# cost that surfaces as an OOM three plans later rather than as an error here.
+
+# -----------------------------------------------------------------------------
+# 1. the metrics collector — chart `prometheus` 29.36.2, app v3.15.0
+# -----------------------------------------------------------------------------
+prometheus:
+  # The four bundled subcharts, all OFF. Each is a component this layer does not
+  # read at this stage and each one costs memory against the 4500 MiB budget.
+  # The alert manager and the pushgateway have no consumer in this course at
+  # all; the node exporter and kube-state-metrics are read by the operations
+  # module's own lesson, which installs them there rather than here.
+  alertmanager:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+
+  rbac:
+    create: true
+
+  # THE CHART'S NINE DEFAULT SCRAPE JOBS, DELETED. This key is the one that
+  # actually governs the scrape list: the chart builds `scrape_configs` from
+  # `scrapeConfigs` AND THEN APPENDS whatever
+  # `serverFiles."prometheus.yml".scrape_configs` carries. Setting the second
+  # alone EXTENDS the defaults rather than replacing them, which was measured
+  # here — the first render carried thirteen jobs including every annotated Pod
+  # and every annotated Service in the cluster.
+  #
+  # `null` rather than `{}`: helm COALESCES an empty map with the chart's
+  # default and the nine jobs come straight back. An explicit null is helm's
+  # documented way to delete a default key, and it is also future-proof — a
+  # tenth default job added upstream cannot reappear here, where a list of
+  # per-job `enabled: false` overrides would silently miss it.
+  scrapeConfigs: null
+
+  server:
+    # Name the Deployment and Service predictably, because verify.sh and the
+    # cost tool both address them by name.
+    name: server
+
+    # THE SCRAPE AND EVALUATION INTERVALS LIVE HERE, NOT IN serverFiles. The
+    # chart's ConfigMap template always emits a `global:` block from this key
+    # and then dumps the rest of the `prometheus.yml` map after it, so a
+    # `global:` written in both places produces a configuration file with the
+    # key twice. Measured: the collector refused it with
+    # `field global already set in type config.plain` and crash-looped, while
+    # its config-reload sidecar stayed up and reported only a refused reload.
+    global:
+      scrape_interval: 30s
+      scrape_timeout: 10s
+      evaluation_interval: 30s
+    image:
+      repository: quay.io/prometheus/prometheus
+      # The INDEX digest for v3.15.0. When `digest` is non-empty the chart emits
+      # `repository@digest` and ignores `tag` entirely, so no tag reaches the
+      # cluster. Resolved and recorded in PINS.md.
+      digest: sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+      pullPolicy: IfNotPresent
+
+    # RETENTION, SET EXPLICITLY AND SHORT. The chart's own default is 15 days.
+    # Nothing in this phase reads a series older than the run that produced it,
+    # and retention is the collector's dominant memory and disk term, so it is
+    # cut to the shortest value that still lets a learner look backwards across
+    # one lab session.
+    retention: "2h"
+
+    persistentVolume:
+      # OFF. A profile is torn down at the end of every lab; a volume that
+      # outlives the cluster is state the Grid repository carries instead.
+      enabled: false
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        # Bounded rather than generous: four scrape targets at a 30s interval
+        # over a 2h retention is a small series count, and a limit is what turns
+        # a cardinality mistake into one restarting Pod instead of an evicted
+        # node on a 4500 MiB budget.
+        memory: 512Mi
+
+    service:
+      type: ClusterIP
+      servicePort: 80
+
+    # No Ingress, no NodePort, no host port. Every endpoint in this layer is
+    # reached through a port forward the verifying script starts and kills,
+    # which is what keeps this a LAYER rather than a profile.
+    ingress:
+      enabled: false
+
+  configmapReload:
+    prometheus:
+      enabled: true
+      image:
+        repository: quay.io/prometheus-operator/prometheus-config-reloader
+        # Index digest for v0.94.1; same digest-over-tag behaviour as above.
+        digest: sha256:06b52bd4dbe3ed6dd5905aadaf8b9987d9da4c31d37bb86deaadae68cee2d26b
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 5m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
+
+  serverFiles:
+    # THE WHOLE SCRAPE LIST, and with `scrapeConfigs: null` above it is the
+    # whole list rather than an addition to one. The chart's defaults scrape
+    # every node, every cAdvisor endpoint, every annotated Pod and every
+    # annotated Service — a sensible default for a cluster somebody operates
+    # and a cardinality bill this course has no use for. Four jobs, named, and
+    # nothing else. No `global:` here; see `server.global` above for why.
+    prometheus.yml:
+      # No rule files. The operations module authors its own recording rules in
+      # the Grid repository; shipping defaults here would mean a learner reading
+      # rules nobody in this course wrote.
+      rule_files: []
+      scrape_configs:
+        - job_name: prometheus
+          static_configs:
+            - targets:
+                - localhost:9090
+        - job_name: kubernetes-apiservers
+          # The ONE piece of cluster state this layer reads. Service discovery
+          # is restricted to the `default` namespace and the keep rule then
+          # narrows it to the single `kubernetes` Service, so the discovery
+          # itself is bounded rather than cluster-wide-then-dropped.
+          #
+          # `endpointslice` rather than `endpoints`, matching the resource the
+          # chart's own ClusterRole grants under `discovery.k8s.io` — a role
+          # the granted RBAC does not cover is a target that stays down for a
+          # permissions reason and reads as a scrape failure.
+          kubernetes_sd_configs:
+            - role: endpointslice
+              namespaces:
+                names:
+                  - default
+          scheme: https
+          tls_config:
+            ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            insecure_skip_verify: false
+          authorization:
+            type: Bearer
+            credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          relabel_configs:
+            - source_labels:
+                - __meta_kubernetes_namespace
+                - __meta_kubernetes_service_name
+                - __meta_kubernetes_endpointslice_port_name
+              action: keep
+              regex: default;kubernetes;https
+        - job_name: grafana
+          static_configs:
+            - targets:
+                - grafana.grid-ops.svc.cluster.local:80
+        - job_name: opencost
+          static_configs:
+            - targets:
+                - opencost.grid-ops.svc.cluster.local:9003
+
+# -----------------------------------------------------------------------------
+# 2. the dashboard surface — chart `grafana` 10.5.15
+# -----------------------------------------------------------------------------
+grafana:
+  image:
+    registry: docker.io
+    repository: grafana/grafana
+    # THE MAJOR HERE IS A FORWARD SCHEMA CONTRACT, NOT A VERSION PREFERENCE, and
+    # it is the one pin in this layer that OVERRIDES its chart's own default.
+    # Chart 10.5.15's appVersion is 12.3.1; no published chart in this series
+    # ships a 13.x appVersion. The course pins 13 because the dashboard JSON a
+    # later phase generates is schema-versioned against the major it was
+    # authored on. PINS.md records the divergence, the phase that consumes the
+    # contract, and the pre-recording item that re-checks it.
+    #
+    # The chart composes `registry/repository:tag@sha256:<sha>`, so `sha` here
+    # is the BARE hex of the index digest with no `sha256:` prefix. The rendered
+    # reference carries both the tag and the digest and Kubernetes resolves it
+    # by digest.
+    tag: "13.2.3"
+    sha: "b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572"
+    pullPolicy: IfNotPresent
+
+  # OFF — this is the chart's `helm test` hook, and it is the ONLY other image
+  # the default render pulls in. Leaving it enabled would put a fourth image
+  # reference in the committed manifest for a Pod this layer never runs.
+  testFramework:
+    enabled: false
+
+  persistence:
+    # OFF, same reason as the collector. It also removes the chart's
+    # `initChownData` init container and its image, which exists only to fix
+    # ownership on a volume there now is none of.
+    enabled: false
+
+  # A FIXED, NON-SECRET, LAB-LOCAL ADMIN PASSWORD, and the reason is
+  # determinism rather than security. With `adminPassword` unset the chart's
+  # own `grafana.password` helper emits `randAlphaNum 40` on every render, so
+  # `helm template` would produce a DIFFERENT Secret every run and the
+  # committed rendered manifest would never match a re-render — which would
+  # destroy the `clean git status after a create run` property every other
+  # layer in this profile relies on as evidence.
+  #
+  # This is not a credential. The instance is a throwaway in a kind cluster
+  # that is deleted at the end of the lab, it is exposed by no Ingress, no
+  # NodePort and no host port, and the only way to reach it is a port forward
+  # the learner starts on their own machine. The literal says so.
+  adminUser: admin
+  adminPassword: not-a-secret-lab-local
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  ingress:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      # MEASURED, not chosen: the pinned major was OOMKilled at 256Mi on this
+      # profile — exit code 137 inside 65 s of starting, with the Deployment
+      # never reaching Available. 512Mi is the next bound that holds, and it
+      # is still a bound rather than a licence; the three settings below cut
+      # what the instance does at startup rather than only widening the room
+      # it has to do it in.
+      memory: 512Mi
+
+  # WHAT THIS INSTANCE DOES NOT DO AT STARTUP, with the reason for each. All
+  # three are reached by the instance's own configuration file rather than by
+  # the chart, which is why they sit together here.
+  #   * no update check and no usage reporting — both are outbound network
+  #     calls from a learner's laptop to a vendor, made by a throwaway
+  #     instance that is deleted at the end of the lab. They are also part of
+  #     the startup work the OOM above was measured during.
+  #   * no plugin preinstall — the pinned major background-installs and then
+  #     UPDATES core datasource plugins on first boot, which is a second set
+  #     of outbound calls and a second memory term for datasources this layer
+  #     does not use. Observed in the instance's own log on the OOM run.
+  grafana.ini:
+    analytics:
+      check_for_updates: false
+      reporting_enabled: false
+    plugins:
+      preinstall_disabled: true
+
+  # No dashboards, no datasource provisioning beyond the collector, no sidecar
+  # watchers. THE DASHBOARDS BELONG TO THE MODULE THAT TEACHES THEM — this plan
+  # ships the surface and the schema contract, not the content.
+  sidecar:
+    dashboards:
+      enabled: false
+    datasources:
+      enabled: false
+
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://prometheus-server.grid-ops.svc.cluster.local:80
+          access: proxy
+          isDefault: true
+
+# -----------------------------------------------------------------------------
+# 3. the cost tool — chart `opencost` 2.5.32, app 1.121.3
+# -----------------------------------------------------------------------------
+# NO COST FIGURE IS ASSERTED OR PUBLISHED BY THIS LAYER. On a laptop with no
+# cloud pricing, any number this tool produces is arithmetic over a fabricated
+# rate, and the course's evidence standard forbids a claim that exceeds what its
+# lab measured. What this layer asserts is that the tool starts, finds the
+# metrics collector and answers its own readiness endpoint. The value the course
+# actually takes from it — a data join against a synthetic metric stream — is a
+# later phase's lab. PINS.md states this boundary in full.
+opencost:
+  loglevel: info
+
+  opencost:
+    exporter:
+      image:
+        registry: ghcr.io
+        repository: opencost/opencost
+        # The chart's own default is ALREADY digest-pinned and the digest it
+        # carries IS the manifest-list index digest — confirmed by resolving it
+        # independently, which is recorded in PINS.md. It is restated here
+        # rather than inherited so this layer's pin set is readable in one file.
+        tag: "1.121.3@sha256:4cdd173253e5abba048dfe2cfa968707a5b59d774157d5356940d0d923a6c281"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          memory: 256Mi
+      persistence:
+        # OFF. Same reason as the other two, and here it matters more: a cost
+        # tool's persisted series on a laptop would be a record of fabricated
+        # rates surviving the cluster that produced them.
+        enabled: false
+
+    prometheus:
+      internal:
+        enabled: true
+        serviceName: prometheus-server
+        namespaceName: grid-ops
+        port: 80
+        scheme: http
+      external:
+        enabled: false
+
+    ui:
+      # OFF. The dashboard surface in this layer is Grafana; a second web UI is
+      # a second image, a second Deployment and a second memory term for a
+      # surface this course does not teach from.
+      enabled: false
+
+    cloudCost:
+      # OFF, and this is the no-cost-figure boundary expressed as configuration
+      # rather than only as prose: with no cloud integration there is no real
+      # pricing, which is exactly why no figure is asserted.
+      enabled: false
+
+  # No Ingress, no NodePort. Port forward only, same as the other two.
+  service:
+    type: ClusterIP

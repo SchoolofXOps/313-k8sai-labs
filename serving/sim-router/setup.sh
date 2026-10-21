@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sim-router — llm-d-inference-sim + llm-d-router Standalone Mode, bring-up
 #
-# Purpose: stand up the prefix-cache-aware routing loop on the spike-core
+# Purpose: stand up the prefix-cache-aware routing loop on the grid-core
 # profile, switch between three routing policies, and replay a fixed request set
 # through it so the three policies can be compared on identical input.
 #
@@ -17,8 +17,8 @@
 #   sim-router-envoy  a self-managed Envoy. ORIGINAL_DST on the header the EPP
 #                sets, so every endpoint choice in the log is the router's.
 #
-# PREREQUISITE: the spike-core profile must be up and verified —
-#   bash labs/clusters/spike-core/create.sh && bash labs/clusters/spike-core/verify.sh
+# PREREQUISITE: the grid-core profile must be up and verified —
+#   bash labs/clusters/grid-core/create.sh && bash labs/clusters/grid-core/verify.sh
 # This script does NOT create a cluster. ONE CLUSTER PROFILE AT A TIME
 # (ROADMAP § Standing Constraints #1).
 #
@@ -42,7 +42,7 @@
 #                       prefix-cache scorer undemonstrable)
 #   POLICIES            space-separated policy list for `replay all`
 #   NAMESPACE           default spike-03
-#   CONTEXT             default kind-spike-core
+#   CONTEXT             default kind-grid-core
 #
 # Idempotent: re-running applies the same manifests and re-gates the rollouts.
 # bash-3.2 compatible (macOS default shell).
@@ -66,11 +66,11 @@ assert_kind_version
 assert_kubectl_version
 
 NAMESPACE="${NAMESPACE:-spike-03}"
-CONTEXT="${CONTEXT:-kind-spike-core}"
+CONTEXT="${CONTEXT:-kind-grid-core}"
 REPLICAS="${REPLICAS:-3}"
 POLICIES="${POLICIES:-round-robin load-aware prefix-cache}"
 COURSE_IMAGE_CACHE="${COURSE_IMAGE_CACHE:-0}"
-export KUBECONFIG="${KUBECONFIG:-/tmp/spike-core.kubeconfig}"
+export KUBECONFIG="${KUBECONFIG:-/tmp/grid-core.kubeconfig}"
 
 # Digest-pinned image set. Defaults MUST equal the digests in the manifests;
 # assert_manifest_pins() fails loudly if an edit ever moves one and not the
@@ -181,7 +181,7 @@ cmd_up() {
   echo
 
   kc cluster-info >/dev/null 2>&1 \
-    || fail "context '${CONTEXT}' is not reachable. Run labs/clusters/spike-core/create.sh first."
+    || fail "context '${CONTEXT}' is not reachable. Run labs/clusters/grid-core/create.sh first."
 
   # Idempotent namespace create.
   kc get namespace "${NAMESPACE}" >/dev/null 2>&1 \
@@ -691,10 +691,10 @@ cmd_teardown() {
   else
     echo "OK: namespace ${NAMESPACE} already absent"
   fi
-  # The cluster itself is NOT touched here: labs/clusters/spike-core/teardown.sh
+  # The cluster itself is NOT touched here: labs/clusters/grid-core/teardown.sh
   # owns that, so one profile's lifecycle stays in one place.
-  echo "NOTE: the spike-core cluster is still up. Remove it with"
-  echo "      bash ${LABS_DIR}/clusters/spike-core/teardown.sh"
+  echo "NOTE: the grid-core cluster is still up. Remove it with"
+  echo "      bash ${LABS_DIR}/clusters/grid-core/teardown.sh"
 }
 
 case "${1:-up}" in

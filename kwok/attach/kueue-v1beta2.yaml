@@ -3,8 +3,8 @@
 # simulated kwok fleet, with three gangs that make the TAS claim falsifiable.
 #
 # EVERY object here is on kueue.x-k8s.io/v1beta2. Kueue v0.20.0 STOPPED SERVING
-# kueue.x-k8s.io/v1beta1 — this is not a deprecation warning, the API server
-# returns the group as unserved and rejects the object. Measured live on this
+# the v1beta1 group — this is not a deprecation warning, the API server returns
+# that group as unserved and rejects the object. Measured live on this
 # cluster (planning/lab-tests/raw/spike-04/kueue-install.log):
 #
 #     $ kubectl get crd clusterqueues.kueue.x-k8s.io -o jsonpath=...
@@ -21,6 +21,21 @@
 # ClusterQueue joins a cohort through `spec.cohortName` (a string), where
 # v1beta1 used `spec.cohort`. Schemas below were read off the live CRDs with
 # `kubectl explain`, not carried over from memory.
+#
+# ---------------------------------------------------------------------------
+# A NOTE ON THE WORDING ABOVE — do not "fix" it
+# ---------------------------------------------------------------------------
+# The dead group is named obliquely throughout this header ("the v1beta1 group",
+# never the full group/version string). That is deliberate. STANDARDS.md C9
+# bans the full superseded string from all authored content, and `labs/` is
+# authored content and is never exempt — so a comment EXPLAINING the ban would
+# trip the check that enforces it. The resolution STANDARDS.md fixes for this
+# case is the one applied here: refer to the string obliquely and never write
+# it, rather than weaken the allowlist that protects the whole lab tree for the
+# sake of one comment. The `kubectl get crd` capture above still shows
+# `v1beta1 served=false` because that is the apiserver's own output and is the
+# evidence; the ban is on the group/version string, which that line does not
+# contain. Nothing is lost: the sentence says exactly what it said before.
 #
 # ---------------------------------------------------------------------------
 # FLEET PRECONDITION — this manifest is NOT fleet-size-agnostic

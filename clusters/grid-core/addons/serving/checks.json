@@ -1,0 +1,61 @@
+{
+  "_why": "PLAT-04, PLAT-06. An ADDON LAYER's checks file. It lives beside the layer's script triple at labs/clusters/grid-core/addons/serving/checks.json, not at labs/mN/checks.json — that second path is the MODULE checks path C1 and C6 read for truth_contract, and a layer is not a module, so this file carries no Truth Contract tag at all. EVERY ENTRY ASSERTS OBJECT STATE OR A PROTOCOL-LEVEL RESPONSE, AND NONE ASSERTS A PERFORMANCE NUMBER: no latency, no token rate, no throughput, no percentage appears in any assert here. The response is judged WELL-FORMED, never fast — a timing figure asserted by a learner's own checks file fails on a slower laptop and teaches the learner that the course is wrong. No entry asserts a Pod PHASE either: a Running phase proves a container started and says nothing about whether the routing loop answers, which is why the request entry reads the completion's own schema and the picker's own endpoint choice. THE LAYER RUNS IN TWO CONFIGURATIONS AND BOTH ARE LEGITIMATE, which is what the two size-conditional entries express: at the minimum size the layer is FENCED by an approved re-cut — measured 5227 MiB of summed container peak against a 4500 MiB lab budget, 727 MiB over, with the cheap reduction tried and falsified at 5749 MiB — so it applies nothing and exits 0, and at the required size it installs and serves. The conditionality uses the project's skip-token idiom with the alternation VISIBLE in the assert, so a reader can see which entries are conditional and on what. BECAUSE CONDITIONAL ENTRIES THAT COULD ALL SKIP WOULD PASS OVER AN EMPTY CLUSTER, the two conditional entries are opposite poles of the same gate — exactly one of them runs at any accepted size — and six further entries are NOT conditional at all, each counting its own subjects so a mis-pathed or truncated scan cannot satisfy it. TWO SCANS ARE DELIBERATELY SCOPED TO THE MANIFESTS AND NOT TO THE LAYER'S SCRIPTS: the two banned image literals have to appear inside create.sh's own pre-apply assert, so a scan that included the scripts would hit its own instrument — the same resolution this project took for its other self-reference traps, which is to scope or reword rather than to exempt. EVERY kubectl RUN SETS KUBECONFIG ITSELF, measured on the base profile: create.sh exports KUBECONFIG=/tmp/grid-core.kubeconfig, but an export inside a script dies with the script, so the learner's own shell has no context and a bare `kubectl --context kind-grid-core` fails with `context was not found`.",
+  "checks": [
+    {
+      "id": "every-image-the-layer-applies-is-digest-pinned",
+      "describe": "PLAT-01 over the layer's own object set, and one of the entries here that needs no cluster: every image reference across the four manifests this layer applies carries an @sha256 digest, drawn from the recorded resolved set. It counts the references as well as the unpinned ones, so a manifest set with zero image lines — a truncated or mis-read tree — cannot satisfy it either. Each pin is a multi-architecture INDEX digest, so the same reference resolves on this arm64 host and on an amd64 runner",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && sed -n 's/^[[:space:]]*image:[[:space:]]*\\(.*\\)$/\\1/p' labs/serving/sim-router/render.yaml labs/serving/sim-router/sim.yaml labs/serving/sim-router/router.yaml labs/serving/sim-router/envoy.yaml | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
+      "assert": { "matches": "^image_refs=[1-9][0-9]* unpinned=0$" }
+    },
+    {
+      "id": "the-cuda-only-official-model-server-image-appears-nowhere-in-the-layer",
+      "describe": "the official model-server image is CUDA-only and will not start on this path, so it must appear in nothing the layer applies. The one model-server image here is the CPU build, and it exists for exactly one reason — to give the simulator and the router a SHARED tokenizer, because precise prefix-cache routing correlates on token ids and the two sides must tokenize identically. The pattern is anchored so the CPU build is not mistaken for the CUDA one. SCANNED SET: the four manifests, deliberately NOT the layer's scripts, because the literal has to appear inside create.sh's own pre-apply assert and a scan including it would hit its own instrument. Counts the scanned files so an empty or mis-pathed scan cannot pass",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && awk 'FNR==1{f++} /vllm\\/vllm-openai[:@]/ {h++} END{printf \"scanned=%d cuda_only_server=%d\\n\", f+0, h+0}' labs/serving/sim-router/render.yaml labs/serving/sim-router/sim.yaml labs/serving/sim-router/router.yaml labs/serving/sim-router/envoy.yaml",
+      "assert": { "matches": "^scanned=4 cuda_only_server=0$" }
+    },
+    {
+      "id": "the-arm64-unavailable-reference-picker-appears-nowhere-on-the-layers-path",
+      "describe": "the upstream reference endpoint picker ships NO arm64 manifest at any published tag — measured 2026-10-04 — and the upstream release notes claiming the arm64 fix landed are WRONG. It is therefore not on the core path at ANY size, and the layer's own header names it as excluded with that reason so nobody adds it back on the strength of the notes. SCANNED SET: the four manifests plus the harness bring-up script — the executable body that actually installs things — and deliberately NOT the layer's scripts, for the same self-instrument reason as the entry above. Counts the scanned files so an empty or mis-pathed scan cannot pass",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && awk 'FNR==1{f++} /lwepp/ {h++} END{printf \"scanned=%d reference_picker=%d\\n\", f+0, h+0}' labs/serving/sim-router/render.yaml labs/serving/sim-router/sim.yaml labs/serving/sim-router/router.yaml labs/serving/sim-router/envoy.yaml labs/serving/sim-router/setup.sh",
+      "assert": { "matches": "^scanned=5 reference_picker=0$" }
+    },
+    {
+      "id": "no-gateway-controller-service-mesh-serverless-layer-or-inference-pool-object",
+      "describe": "Standalone Mode is what makes a routing lab possible on a laptop: the router runs its OWN data plane beside the endpoint picker, so the loop needs no gateway controller, no service mesh, no serverless layer and no inference-pool custom resource. This asserts that over the APPLIED OBJECT SET rather than over any text: only an apiVersion: or apiGroups: line can name a group the cluster will actually be asked for, and the scan is restricted to those, on non-comment lines. That restriction is correctness and not convenience — the router manifest's own RBAC comment EXPLAINS which groups the inference-pool path would additionally need, and a plain text scan hit that explanation, which is a self-reference trap rather than a violation. It counts the object kinds it walked past so a scan that read nothing cannot satisfy it",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && awk 'BEGIN{k=0;h=0} /^[[:space:]]*#/ {next} /^kind:/ {k++} (/apiVersion:/ || /apiGroups:/) && /gateway\\.networking\\.k8s\\.io|inference\\.networking|networking\\.istio\\.io|serving\\.knative\\.dev/ {h++} END{printf \"kinds=%d banned_groups=%d\\n\", k+0, h+0}' labs/serving/sim-router/render.yaml labs/serving/sim-router/sim.yaml labs/serving/sim-router/router.yaml labs/serving/sim-router/envoy.yaml",
+      "assert": { "matches": "^kinds=[1-9][0-9]* banned_groups=0$" }
+    },
+    {
+      "id": "the-layer-makes-no-create-time-change-to-the-cluster",
+      "describe": "the property that makes this a LAYER rather than a profile, asserted rather than claimed: nothing the layer applies needs a node-container bind mount, a port mapping, a host port or the host network — every endpoint is reached through a port forward the verifying script starts and kills. Those are the create-time-immutable shapes, and a layer that grew one would have to become a profile. Comment lines are skipped for the same reason the entry above restricts itself to apiVersion: and apiGroups: lines: a comment stating that a shape is absent is not that shape, and a scan that counted it would be reading its own explanation. Counts the object kinds it walked past so a scan that read nothing cannot satisfy it",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && awk 'BEGIN{k=0;h=0} /^[[:space:]]*#/ {next} /^kind:/ {k++} /hostPath:|hostPort:|hostNetwork:|extraMounts:|extraPortMappings:/ {h++} END{printf \"kinds=%d create_time_shapes=%d\\n\", k+0, h+0}' labs/serving/sim-router/render.yaml labs/serving/sim-router/sim.yaml labs/serving/sim-router/router.yaml labs/serving/sim-router/envoy.yaml",
+      "assert": { "matches": "^kinds=[1-9][0-9]* create_time_shapes=0$" }
+    },
+    {
+      "id": "the-layer-reports-its-own-state-and-the-fence-is-visible-in-the-line",
+      "describe": "verify.sh exits 0 in BOTH legitimate configurations and its one OK: line says which one it is — fenced with a zero-workload post-condition asserted, or installed with a response read from the router. The alternation here is what makes the fence visible without the entry having to know which size it is running at, and neither branch can be satisfied by an un-applied layer at the installing size: there verify.sh exits non-zero on its own empty guard",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/clusters/grid-core/addons/serving/verify.sh",
+      "assert": { "matches": "^OK: addon-serving (fenced at SIZE=[0-9]+ and verified as fenced|verified on )" }
+    },
+    {
+      "id": "at-the-required-size-a-request-through-the-router-returns-a-well-formed-response",
+      "describe": "PLAT-06's one affirmative assertion, and the SIZE-CONDITIONAL entry that puts the fence in this file in the authority's own idiom: at the required size verify.sh sends a real completion request through the router's data plane and reads the response FROM THE ROUTER, then reads the endpoint choice back out of the data plane's access log — the destination header the picker SET, equal to the upstream the data plane CONNECTED to. At the other size the gate prints the fixed skip token and the alternation matches that instead. A request sent straight to a simulator would return 200 with a well-formed body and prove nothing about the routing path, which is the half PLAT-06 names, so the OK: line has to say the response came from the router",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/tools/size-gate.sh 16 -- bash labs/clusters/grid-core/addons/serving/verify.sh",
+      "assert": { "matches": "^OK: addon-serving verified on .*READ FROM THE ROUTER|^SIZE-GATE: skipped" }
+    },
+    {
+      "id": "at-the-minimum-size-the-layer-namespace-carries-no-workload",
+      "describe": "the OTHER pole of the same gate, so that exactly one of these two conditional entries runs at any accepted size and neither size leaves the pair vacuous. At the minimum size the layer is fenced and must have applied nothing, read off the cluster rather than off create.sh's exit code: a fenced create that silently installed anyway would exit 0 and look identical, and on this machine it would then exhaust memory and take the cluster rather than the script. An absent namespace counts as zero, which is the usual and correct state",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && bash labs/tools/size-gate.sh 8 -- sh -c 'KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n spike-03 get deploy -o json 2>/dev/null | jq -r \"[.items[].metadata.name | select(. == \\\"vllm-render\\\" or . == \\\"sim\\\" or . == \\\"sim-router-epp\\\" or . == \\\"sim-router-envoy\\\")] | \\\"layer_workloads=\\\" + (length | tostring)\" || echo layer_workloads=0'",
+      "assert": { "matches": "^layer_workloads=0$|^SIZE-GATE: skipped" }
+    }
+  ]
+}

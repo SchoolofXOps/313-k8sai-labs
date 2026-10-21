@@ -8,7 +8,7 @@
 #
 # `extraMounts` is CREATE-TIME-ONLY — it is an argument to `docker run` for the
 # node container, so it exists only if it was declared when the node was
-# created. The entry lives in labs/clusters/spike-core/create.sh; run.sh
+# created. The entry lives in labs/clusters/grid-core/create.sh; run.sh
 # hard-fails before measuring anything if __HOSTPATH_NODE__ is not present
 # inside the node, rather than silently measuring a directory on the node's
 # overlay filesystem and reporting it as a host-disk figure.
