@@ -87,7 +87,12 @@ for _f in "${GANGS_FILE}" "${TENANTS_FILE}"; do
     # By FILE, so the cluster-scoped objects in them — the Topology, the
     # ResourceFlavor, the ClusterQueues and the Cohort — go too rather than
     # surviving a namespace delete.
-    kc delete -f "${_f}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+    #
+    # `--wait=false`, deliberately: the objects in these files carry Kueue
+    # finalizers, and `--wait=true` with no `--timeout` waits FOREVER if the
+    # controller that clears them is not there — the exact state this script's
+    # header describes. The bounded Workload-finalizer poll below is the wait.
+    kc delete -f "${_f}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   fi
 done
 
@@ -107,6 +112,32 @@ if [ "${WL_LEFT}" -ne 0 ]; then
   echo "      on a cluster whose Workloads belong to something else, stop and look."
 fi
 
+# The gang NAMESPACES, polled to absence while the controller and the fleet are
+# still up. `--wait=false` above displaced the only wait that held namespace
+# termination inside this window: the Workload poll reads Workloads, not
+# namespaces, and the Jobs and StatefulSets in those namespaces have pods bound
+# to fake nodes whose GC needs the fleet. A namespace still Terminating when
+# step 4 runs answers `kc get namespace` successfully and FAILs the assertion —
+# intermittently, because fake-node deletion usually rescues it. Bounded, so a
+# finalizer nobody clears cannot hang this; step 4 is still what decides.
+GANG_NAMESPACES="kueue-kwok-tas kueue-kwok-tas-block tenant-a tenant-b tenant-c"
+echo "==> Waiting for the gang namespaces to finish terminating (controller and fleet still up)"
+_waited=0
+NS_LEFT=0
+while [ "${_waited}" -lt 120 ]; do
+  NS_LEFT=0
+  for _ns in ${GANG_NAMESPACES}; do
+    if kc get namespace "${_ns}" >/dev/null 2>&1; then NS_LEFT=$((NS_LEFT + 1)); fi
+  done
+  if [ "${NS_LEFT}" -eq 0 ]; then break; fi
+  sleep 3
+  _waited=$((_waited + 3))
+done
+if [ "${NS_LEFT}" -ne 0 ]; then
+  echo "NOTE: ${NS_LEFT} gang namespace(s) still present after ${_waited}s; continuing, and step 4"
+  echo "      FAILs if any is still there once the fleet and Kueue are gone."
+fi
+
 # --- 2. the simulated fleet ---------------------------------------------------
 # Driven, not duplicated: setup.sh owns the enumerated kwok object set and its
 # own post-removal asserts.
@@ -124,8 +155,10 @@ echo "==> Removing the Kueue install"
 if [ -f "${RENDERED}" ]; then
   # By FILE: the rendered object set carries the eleven CRDs, the ClusterRoles,
   # the ClusterRoleBindings, the webhook configurations and the APIService, none
-  # of which a namespace delete would reach.
-  kc delete -f "${RENDERED}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+  # of which a namespace delete would reach. Bounded: an unbounded `--wait=true`
+  # hangs on any finalizer nobody is left to clear, and the asserts in step 4
+  # are what the OK line rests on, not this wait.
+  kc delete -f "${RENDERED}" --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
 else
   echo "NOTE: ${RENDERED} is absent, so the cluster-scoped Kueue objects are removed by name instead."
   kc delete crd \
@@ -135,7 +168,7 @@ else
     topologies.kueue.x-k8s.io workloadpriorityclasses.kueue.x-k8s.io workloads.kueue.x-k8s.io \
     --ignore-not-found >/dev/null 2>&1 || true
 fi
-kc delete namespace "${NAMESPACE}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+kc delete namespace "${NAMESPACE}" --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
 
 # --- 4. the OK line has to be earned -----------------------------------------
 # Assert what it claims: the layer is gone, and the real cluster is still here.
@@ -152,7 +185,7 @@ if kc get crd clusterqueues.kueue.x-k8s.io >/dev/null 2>&1; then
   echo "FAIL: the Kueue CRDs are still present after teardown." >&2
   rc=1
 fi
-for _ns in kueue-kwok-tas kueue-kwok-tas-block; do
+for _ns in ${GANG_NAMESPACES}; do
   if kc get namespace "${_ns}" >/dev/null 2>&1; then
     echo "FAIL: namespace '${_ns}' still present after teardown." >&2
     rc=1

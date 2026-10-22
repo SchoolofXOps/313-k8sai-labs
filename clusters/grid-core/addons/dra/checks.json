@@ -36,10 +36,10 @@
     },
     {
       "id": "running-plugin-is-on-the-pinned-digest",
-      "describe": "the imageID the kubelet actually resolved for the running plugin carries the pinned manifest-list index digest. The rendered manifest proves what was ASKED FOR; this proves what RAN, which is the half a written-only pin cannot show",
+      "describe": "the imageID EVERY kubelet actually resolved for a Running plugin pod carries the pinned manifest-list index digest. The rendered manifest proves what was ASKED FOR; this proves what RAN, which is the half a written-only pin cannot show. Folded across every Running pod and printed as pinned/total with a backreference, rather than read off .items[0]: at SIZE=16 the DaemonSet has two pods and the first in API order says nothing about the second, and after a re-apply .items[0] can be the OLD pod still Terminating on the previous digest — the Running field-selector excludes it, and zero running pods cannot satisfy the backreference",
       "weight": 2,
-      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver get pod -l app.kubernetes.io/component=kubeletplugin -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'",
-      "assert": { "contains": "@sha256:c1488eb51e086bd6b885a667c7d059382844e54e5917a71bcf734c04edfbb62f" }
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver get pod -l app.kubernetes.io/component=kubeletplugin --field-selector status.phase=Running -o json | jq -r '[.items[].status.containerStatuses[]?.imageID] | \"plugin_containers_pinned=\" + ([.[] | select(contains(\"@sha256:c1488eb51e086bd6b885a667c7d059382844e54e5917a71bcf734c04edfbb62f\"))] | length | tostring) + \"/\" + (length | tostring)'",
+      "assert": { "matches": "^plugin_containers_pinned=([1-9][0-9]*)/\\1$" }
     },
     {
       "id": "device-health-reported-healthy-in-pod-status",

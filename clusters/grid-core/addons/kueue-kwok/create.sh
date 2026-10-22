@@ -600,20 +600,30 @@ if [ "${LIVE_MAPPED:-0}" -lt 1 ]; then
   exit 1
 fi
 
-# The pin is only honoured if the thing that is RUNNING carries it. A rendered
+# The pin is only honoured if EVERY thing that is RUNNING carries it. A rendered
 # manifest proves what was asked for; imageID is what the kubelet resolved.
-RUNNING_IMAGE_ID="$(kc -n "${NAMESPACE}" get pod -l control-plane=controller-manager \
-                      -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null || true)"
-case "${RUNNING_IMAGE_ID}" in
-  *"${KUEUE_IMAGE_DIGEST}"*) : ;;
-  *)
-    echo "FAIL: the running Kueue controller's imageID is '${RUNNING_IMAGE_ID:-<empty>}'," >&2
-    echo "      which does not carry the pinned digest ${KUEUE_IMAGE_DIGEST}." >&2
-    echo "      The manifest asked for the pin and the node resolved something else," >&2
-    echo "      which is exactly the case a written-only pin would not catch." >&2
-    exit 1
-    ;;
-esac
+# Folded across every Running pod rather than read off `.items[0]`: after a
+# re-apply `.items[0]` can be the OLD controller pod still Terminating, carrying
+# the previous digest. The Running field-selector is what excludes it.
+RUNNING_IMAGE_IDS="$(kc -n "${NAMESPACE}" get pod -l control-plane=controller-manager \
+                       --field-selector status.phase=Running -o json 2>/dev/null \
+                     | jq -r '[.items[].status.containerStatuses[]?.imageID] | join(" ")' 2>/dev/null || true)"
+PODS_SEEN=0
+PODS_PINNED=0
+for _id in ${RUNNING_IMAGE_IDS}; do
+  PODS_SEEN=$((PODS_SEEN + 1))
+  case "${_id}" in
+    *"${KUEUE_IMAGE_DIGEST}"*) PODS_PINNED=$((PODS_PINNED + 1)) ;;
+  esac
+done
+if [ "${PODS_SEEN}" -lt 1 ] || [ "${PODS_PINNED}" -ne "${PODS_SEEN}" ]; then
+  echo "FAIL: ${PODS_PINNED}/${PODS_SEEN} running Kueue controller container(s) carry the pinned digest ${KUEUE_IMAGE_DIGEST}." >&2
+  echo "      The manifest asked for the pin and the node resolved something else," >&2
+  echo "      which is exactly the case a written-only pin would not catch — and zero" >&2
+  echo "      running containers is a rollout that did not happen, not a clean read." >&2
+  echo "      Running imageIDs: ${RUNNING_IMAGE_IDS:-<none>}" >&2
+  exit 1
+fi
 
 # --- 6. the simulated fleet ---------------------------------------------------
 # DRIVEN, not duplicated: setup.sh owns fetch_verified and both release-asset

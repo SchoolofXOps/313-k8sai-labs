@@ -66,11 +66,11 @@
     },
     {
       "id": "running-controller-is-on-the-pinned-digest",
-      "describe": "the imageID the kubelet actually resolved for the running Kueue controller carries the pinned manifest-list index digest. The rendered manifest proves what was ASKED FOR; this proves what RAN, which is the half a written-only pin cannot show. This pin is new in plan 03-03: the chart ships its controller image by TAG, and nothing in this project had resolved its index digest before",
+      "describe": "the imageID the kubelet actually resolved for EVERY Running Kueue controller pod carries the pinned manifest-list index digest, folded and printed as pinned/total with a backreference rather than read off .items[0] — after a re-apply .items[0] can be the OLD pod still Terminating on the previous digest, which the Running field-selector excludes, and zero running pods cannot satisfy the backreference. The rendered manifest proves what was ASKED FOR; this proves what RAN, which is the half a written-only pin cannot show. This pin is new in plan 03-03: the chart ships its controller image by TAG, and nothing in this project had resolved its index digest before",
       "weight": 2,
-      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kueue-system get pod -l control-plane=controller-manager -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n kueue-system get pod -l control-plane=controller-manager --field-selector status.phase=Running -o json | jq -r '[.items[].status.containerStatuses[]?.imageID] | \"controller_containers_pinned=\" + ([.[] | select(contains(\"@sha256:7c57f630b2987058cc543710aa4829cfd8119b7f7c23431cbc242b82cf4bce57\"))] | length | tostring) + \"/\" + (length | tostring)'",
       "assert": {
-        "contains": "@sha256:7c57f630b2987058cc543710aa4829cfd8119b7f7c23431cbc242b82cf4bce57"
+        "matches": "^controller_containers_pinned=([1-9][0-9]*)/\\1$"
       }
     },
     {

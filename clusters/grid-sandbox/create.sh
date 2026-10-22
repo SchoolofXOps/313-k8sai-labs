@@ -208,9 +208,27 @@ $1
   return 1
 }
 
+# The kubeconfig is REGENERATED before anything reads it: macOS clears /tmp on
+# reboot while Rancher Desktop brings the node containers back, so the cluster
+# exists and ${KUBECONFIG} does not. Probing first would end this script under
+# `set -e` on `context "kind-grid-sandbox" does not exist` with no FAIL line.
+# `kind export kubeconfig` is idempotent and uses the kind already asserted.
 if kind_cluster_exists "${CLUSTER_NAME}"; then
   echo "kind cluster '${CLUSTER_NAME}' already exists — reusing it."
-  kc cluster-info >/dev/null
+  if ! kind export kubeconfig --name "${CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" >/dev/null 2>&1; then
+    echo "FAIL: cluster '${CLUSTER_NAME}' exists but its kubeconfig could not be written to ${KUBECONFIG}." >&2
+    echo "      Inspect: kind export kubeconfig --name ${CLUSTER_NAME} --kubeconfig ${KUBECONFIG}" >&2
+    echo "      If the node containers are stopped, start the container runtime and re-run this;" >&2
+    echo "      otherwise: bash ${PROFILE_DIR}/teardown.sh && bash ${PROFILE_DIR}/create.sh" >&2
+    exit 1
+  fi
+  if ! kc cluster-info >/dev/null 2>&1; then
+    echo "FAIL: cluster '${CLUSTER_NAME}' exists and its kubeconfig was written, but the API server on" >&2
+    echo "      context '${CONTEXT}' did not answer." >&2
+    echo "      Inspect: docker ps --filter name=${CLUSTER_NAME}; kubectl --context ${CONTEXT} cluster-info" >&2
+    echo "      Recreate: bash ${PROFILE_DIR}/teardown.sh && bash ${PROFILE_DIR}/create.sh" >&2
+    exit 1
+  fi
   echo "  node image is create-time-immutable; this script did not re-apply it."
   echo "next: SIZE=${SIZE} bash ${PROFILE_DIR}/verify.sh"
   exit 0

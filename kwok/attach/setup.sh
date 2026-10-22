@@ -195,11 +195,23 @@ fetch_verified() {
 
 # --- preflight ----------------------------------------------------------------
 preflight() {
-  if ! kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
-    echo "FAIL: kind cluster '${CLUSTER_NAME}' not found — this installs INTO the real cluster." >&2
-    echo "      Run: bash labs/clusters/grid-core/create.sh && bash labs/clusters/grid-core/verify.sh" >&2
-    exit 1
-  fi
+  # Captured and matched with `case`, never `kind get clusters | grep -q`: under
+  # `pipefail` a reader that exits on its first match can return 141 (SIGPIPE)
+  # on a SUCCESSFUL match. The newline fencing makes the match exact.
+  local kind_clusters
+  kind_clusters="$(kind get clusters 2>/dev/null || true)"
+  case "
+${kind_clusters}
+" in
+    *"
+${CLUSTER_NAME}
+"*) : ;;
+    *)
+      echo "FAIL: kind cluster '${CLUSTER_NAME}' not found — this installs INTO the real cluster." >&2
+      echo "      Run: bash labs/clusters/grid-core/create.sh && bash labs/clusters/grid-core/verify.sh" >&2
+      exit 1
+      ;;
+  esac
   if ! kc get --raw='/readyz' >/dev/null 2>&1; then
     echo "FAIL: API server /readyz did not answer on context '${CONTEXT}'." >&2
     echo "      Inspect: kubectl --context ${CONTEXT} get --raw=/readyz" >&2

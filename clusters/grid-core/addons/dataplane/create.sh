@@ -199,10 +199,19 @@ fi
 echo "mount: ${MOUNT_SOURCE} -> ${HOSTPATH_NODE} in ${WORKER_NODE} (create-time bind, carried by the base profile)"
 
 # --- 3. the digest pins the layer is about to apply ---------------------------
-# Asserted BEFORE the apply and over the manifests that will actually be
-# applied, so a tag-form reference cannot reach the cluster. Counted as well as
-# checked: a manifest set with zero image references would otherwise satisfy
-# "no unpinned reference".
+# The image that reaches the cluster is decided in TWO places, so this is two
+# assertions and the report line says which it is quoting. The committed
+# TEMPLATES carry a placeholder where every image goes; the first pass proves
+# they hold no tag-form literal of their own, counting a placeholder as a
+# reference and not as unpinned. What the placeholder BECOMES is a shell
+# variable in run.sh, and each of the three is env-overridable — so the second
+# pass asserts every override present in this environment carries an @sha256
+# digest, because a template scan passes while `S3_IMAGE=some/image:latest`
+# applies a tag. run.sh asserts the fully SUBSTITUTED stream once more at the
+# moment it exists, immediately before its own apply; that is the gate that
+# sees exactly what is applied, and this layer's report names it rather than
+# claiming it. Counted as well as checked: a manifest set with zero image
+# references would otherwise satisfy "no unpinned reference".
 PIN_REPORT="$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(.*\)$/\1/p' \
                 "${HARNESS_DIR}"/s3.yaml "${HARNESS_DIR}"/nfs.yaml \
                 "${HARNESS_DIR}"/pvc.yaml "${HARNESS_DIR}"/hostpath.yaml \
@@ -214,13 +223,31 @@ esac
 PIN_REFS="${PIN_REPORT#image_refs=}"; PIN_REFS="${PIN_REFS%% *}"
 PIN_BAD="${PIN_REPORT##*unpinned=}"
 if [ "${PIN_REFS}" -lt 1 ] || [ "${PIN_BAD}" -ne 0 ]; then
-  echo "FAIL: the layer's manifests report '${PIN_REPORT}'." >&2
+  echo "FAIL: the layer's committed templates report '${PIN_REPORT}'." >&2
   echo "      Every image this layer applies must be an @sha256 digest reference, and a" >&2
   echo "      manifest set with zero references is a truncated or mis-read tree rather" >&2
   echo "      than a clean one. Nothing has been applied." >&2
   exit 1
 fi
-echo "digest-pin: ${PIN_REPORT} across the four path manifests (pre-apply assert passed)"
+PIN_OVERRIDES=0
+for _var in S3_IMAGE NFS_IMAGE CLIENT_IMAGE; do
+  _val="${!_var:-}"
+  [ -n "${_val}" ] || continue
+  PIN_OVERRIDES=$((PIN_OVERRIDES + 1))
+  case "${_val}" in
+    *@sha256:*) : ;;
+    *)
+      echo "FAIL: ${_var} is set in this environment to '${_val}', which carries no @sha256 digest." >&2
+      echo "      That value replaces the template placeholder and is what the cluster would pull," >&2
+      echo "      and the template assert above cannot see it. Every image this layer applies" >&2
+      echo "      must be an @sha256 digest reference. Nothing has been applied." >&2
+      echo "      Either unset ${_var} to take the harness's pinned default, or set it to a" >&2
+      echo "      digest reference: ${_var}=<repository>@sha256:<64 hex>" >&2
+      exit 1
+      ;;
+  esac
+done
+echo "digest-pin: ${PIN_REPORT} across the four committed templates (placeholders counted as references); ${PIN_OVERRIDES} image override(s) in this environment, all digest-pinned; the substituted stream is asserted by run.sh before its apply"
 
 # --- 4. apply, by driving the harness rather than duplicating it --------------
 # The harness owns the probe, the manifests, the placeholder substitution and

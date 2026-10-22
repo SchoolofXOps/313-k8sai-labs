@@ -438,18 +438,27 @@ if [ "${RACK_COUNT}" -ne 1 ]; then
   exit 1
 fi
 
-# --- 9. the digest the running controller resolved ---------------------------
-RUNNING_IMAGE_ID="$(kc -n "${NAMESPACE}" get pod -l control-plane=controller-manager \
-                      -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null || true)"
-case "${RUNNING_IMAGE_ID}" in
-  *"${PINNED_DIGEST}"*) : ;;
-  *)
-    echo "FAIL: the running Kueue controller's imageID is '${RUNNING_IMAGE_ID:-<empty>}'," >&2
-    echo "      which does not carry the digest pinned in ${RENDERED} (${PINNED_DIGEST})." >&2
-    echo "      A written pin proves what was asked for; imageID is what the node resolved." >&2
-    exit 1
-    ;;
-esac
+# --- 9. the digest EVERY running controller pod resolved ----------------------
+# Folded across every Running pod rather than read off `.items[0]`: after a
+# re-apply `.items[0]` can be the OLD controller pod still Terminating, carrying
+# the previous digest. The Running field-selector is what excludes it.
+RUNNING_IMAGE_IDS="$(kc -n "${NAMESPACE}" get pod -l control-plane=controller-manager \
+                       --field-selector status.phase=Running -o json 2>/dev/null \
+                     | jq -r '[.items[].status.containerStatuses[]?.imageID] | join(" ")' 2>/dev/null || true)"
+PODS_SEEN=0
+PODS_PINNED=0
+for _id in ${RUNNING_IMAGE_IDS}; do
+  PODS_SEEN=$((PODS_SEEN + 1))
+  case "${_id}" in
+    *"${PINNED_DIGEST}"*) PODS_PINNED=$((PODS_PINNED + 1)) ;;
+  esac
+done
+if [ "${PODS_SEEN}" -lt 1 ] || [ "${PODS_PINNED}" -ne "${PODS_SEEN}" ]; then
+  echo "FAIL: ${PODS_PINNED}/${PODS_SEEN} running Kueue controller container(s) carry the digest pinned in ${RENDERED} (${PINNED_DIGEST})." >&2
+  echo "      A written pin proves what was asked for; imageID is what the node resolved." >&2
+  echo "      Running imageIDs: ${RUNNING_IMAGE_IDS:-<none>}" >&2
+  exit 1
+fi
 
 echo "OK: addon-kueue-kwok verified on '${CLUSTER_NAME}' — ${FLEET_READY}/${FLEET_COUNT} simulated nodes Ready (FLEET=${FLEET}, count from ${FLEET_SOURCE}), ${WL_COUNT} Kueue Workload(s), Configuration in ${CONFIG_GROUP} with ${MAPPING_COUNT} deviceClassMapping(s) naming '${DEVICE_CLASS_NAME}', '${GANG_OK}' admitted to ClusterQueue '${OK_ADMISSION}' reserving ${RESERVED_CPU} cpu inside the single rack '${RACKS_USED}', and '${GANG_REFUSED}' refused with .status.admission null and reason ${REFUSED_STATE}."
 echo "  the fleet is SIMULATED — those nodes are not machines, they carry no kubelet, and nothing on them is a GPU"

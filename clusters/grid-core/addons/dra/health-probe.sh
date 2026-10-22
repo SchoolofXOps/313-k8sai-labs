@@ -244,6 +244,9 @@ esac
 # it) and its own annotation on the driver pod, on success AND on failure. A
 # probe that leaves a device pinned unhealthy would poison the next layer's
 # verify, and a probe that leaves a claiming Pod behind holds a device allocated.
+# The namespace delete is BOUNDED: this runs inside the EXIT trap, and an
+# unbounded `--wait=true` on a Pod whose finalizer never clears would hang here
+# and mask whatever failure triggered the trap.
 CLEANED=0
 cleanup() {
   if [ "${CLEANED}" -eq 1 ]; then return 0; fi
@@ -251,7 +254,7 @@ cleanup() {
   if [ -n "${DRIVER_POD:-}" ] && [ -n "${DEVICE:-}" ]; then
     kc annotate -n "${DRIVER_NS}" "${DRIVER_POD}" "health.example.com/${DEVICE}-" >/dev/null 2>&1 || true
   fi
-  kc delete namespace "${PROBE_NS}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+  kc delete namespace "${PROBE_NS}" --ignore-not-found --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -261,7 +264,7 @@ trap cleanup EXIT
 PROBE_NS_PHASE="$(kc get namespace "${PROBE_NS}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
 if [ -n "${PROBE_NS_PHASE}" ]; then
   echo "==> namespace '${PROBE_NS}' is left over (phase ${PROBE_NS_PHASE}); removing it first" >&2
-  kc delete namespace "${PROBE_NS}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+  kc delete namespace "${PROBE_NS}" --ignore-not-found --wait=true --timeout=120s >/dev/null 2>&1 || true
   _w=0
   while [ "${_w}" -lt 120 ]; do
     if ! kc get namespace "${PROBE_NS}" >/dev/null 2>&1; then break; fi

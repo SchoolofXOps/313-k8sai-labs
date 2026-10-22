@@ -251,9 +251,30 @@ for _other in ${KIND_CLUSTERS}; do
 done
 
 # Idempotent existence gate.
+#
+# The kubeconfig is REGENERATED before anything reads it, because the cluster
+# and the file have different lifetimes: macOS clears /tmp on reboot while
+# Rancher Desktop brings the kind node containers back, so the cluster exists
+# and ${KUBECONFIG} does not. Probing first would end this script under `set
+# -e` on `context "kind-grid-core" does not exist` with no FAIL line and no
+# remedy — on the one path every addon layer's BASE remedy sends a learner to.
+# `kind export kubeconfig` is idempotent and uses the kind already asserted.
 if kind_cluster_exists "${CLUSTER_NAME}"; then
   echo "kind cluster '${CLUSTER_NAME}' already exists — reusing it."
-  kc cluster-info >/dev/null
+  if ! kind export kubeconfig --name "${CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" >/dev/null 2>&1; then
+    echo "FAIL: cluster '${CLUSTER_NAME}' exists but its kubeconfig could not be written to ${KUBECONFIG}." >&2
+    echo "      Inspect: kind export kubeconfig --name ${CLUSTER_NAME} --kubeconfig ${KUBECONFIG}" >&2
+    echo "      If the node containers are stopped, start the container runtime and re-run this;" >&2
+    echo "      otherwise: bash ${PROFILE_DIR}/teardown.sh && bash ${PROFILE_DIR}/create.sh" >&2
+    exit 1
+  fi
+  if ! kc cluster-info >/dev/null 2>&1; then
+    echo "FAIL: cluster '${CLUSTER_NAME}' exists and its kubeconfig was written, but the API server on" >&2
+    echo "      context '${CONTEXT}' did not answer." >&2
+    echo "      Inspect: docker ps --filter name=${CLUSTER_NAME}; kubectl --context ${CONTEXT} cluster-info" >&2
+    echo "      Recreate: bash ${PROFILE_DIR}/teardown.sh && bash ${PROFILE_DIR}/create.sh" >&2
+    exit 1
+  fi
   if ! gates_enabled_on_cluster; then
     echo "NOTE: this cluster was created WITHOUT the three Kubernetes 1.37 feature"
     echo "      gates this profile carries (${FEATURE_GATES// /, })."

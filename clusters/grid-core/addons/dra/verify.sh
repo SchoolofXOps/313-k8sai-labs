@@ -231,18 +231,29 @@ fi
 PCIEROOTS_SEEN="$(printf '%s' "${SLICE_JSON}" | jq -r '
   [ .items[].spec.devices[].attributes["resource.kubernetes.io/pcieRoot"].string ] | unique | join(",")')"
 
-# --- 8. the digest the running pod resolved -----------------------------------
-RUNNING_IMAGE_ID="$(kc -n "${NAMESPACE}" get pod -l app.kubernetes.io/component=kubeletplugin \
-                      -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null || true)"
-case "${RUNNING_IMAGE_ID}" in
-  *"${PINNED_DIGEST}"*) : ;;
-  *)
-    echo "FAIL: the running driver pod's imageID is '${RUNNING_IMAGE_ID:-<empty>}'," >&2
-    echo "      which does not carry the digest pinned in ${RENDERED} (${PINNED_DIGEST})." >&2
-    echo "      A written pin proves what was asked for; imageID is what the node resolved." >&2
-    exit 1
-    ;;
-esac
+# --- 8. the digest EVERY running pod resolved ---------------------------------
+# Folded across every Running pod rather than read off `.items[0]`: at SIZE=16
+# the DaemonSet has two pods and the first in API order says nothing about the
+# second, and after a re-apply `.items[0]` can be the OLD pod still Terminating,
+# carrying the previous digest. The Running field-selector is what excludes it.
+RUNNING_IMAGE_IDS="$(kc -n "${NAMESPACE}" get pod -l app.kubernetes.io/component=kubeletplugin \
+                       --field-selector status.phase=Running -o json 2>/dev/null \
+                     | jq -r '[.items[].status.containerStatuses[]?.imageID] | join(" ")' 2>/dev/null || true)"
+PODS_SEEN=0
+PODS_PINNED=0
+for _id in ${RUNNING_IMAGE_IDS}; do
+  PODS_SEEN=$((PODS_SEEN + 1))
+  case "${_id}" in
+    *"${PINNED_DIGEST}"*) PODS_PINNED=$((PODS_PINNED + 1)) ;;
+  esac
+done
+if [ "${PODS_SEEN}" -lt 1 ] || [ "${PODS_PINNED}" -ne "${PODS_SEEN}" ]; then
+  echo "FAIL: ${PODS_PINNED}/${PODS_SEEN} running driver container(s) carry the digest pinned in ${RENDERED} (${PINNED_DIGEST})." >&2
+  echo "      A written pin proves what was asked for; imageID is what each node resolved, and" >&2
+  echo "      a single drifted node cannot hide behind a compliant one." >&2
+  echo "      Running imageIDs: ${RUNNING_IMAGE_IDS:-<none>}" >&2
+  exit 1
+fi
 
 echo "OK: addon-dra verified on '${CLUSTER_NAME}' — ${SLICE_COUNT} ResourceSlice(s) all reporting spec.driver '${DRIVER_NAME}', DeviceClass '${DC_NAME}' with a CEL selector naming the same driver, ${EXPECTED_DEVICES} synthetic devices per slice (${TOTAL_DEVICES} total) each publishing resource.kubernetes.io/pcieRoot, and the running plugin on the pinned digest."
 echo "  the devices are SIMULATED — the driver's own device names, model string and 80Gi capacity are constants in its source, not readings"

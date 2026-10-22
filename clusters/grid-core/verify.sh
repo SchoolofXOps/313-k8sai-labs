@@ -70,10 +70,22 @@ RECREATE="SIZE=${SIZE} bash ${PROFILE_DIR}/teardown.sh && SIZE=${SIZE} bash ${PR
 
 kc() { kubectl --context "${CONTEXT}" "$@"; }
 
-if ! kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
-  echo "FAIL: kind cluster '${CLUSTER_NAME}' not found. Run: SIZE=${SIZE} bash ${PROFILE_DIR}/create.sh" >&2
-  exit 1
-fi
+# Captured and matched with `case`, never `kind get clusters | grep -q`: under
+# `pipefail` a reader that exits on its first match can return 141 (SIGPIPE) on
+# a SUCCESSFUL match. The newline fencing makes the match exact — 'grid-core'
+# must not match 'grid-core-dra'. The idiom create.sh uses, for the same reason.
+KIND_CLUSTERS="$(kind get clusters 2>/dev/null || true)"
+case "
+${KIND_CLUSTERS}
+" in
+  *"
+${CLUSTER_NAME}
+"*) : ;;
+  *)
+    echo "FAIL: kind cluster '${CLUSTER_NAME}' not found. Run: SIZE=${SIZE} bash ${PROFILE_DIR}/create.sh" >&2
+    exit 1
+    ;;
+esac
 
 echo "Waiting for every REAL node to be Ready ..."
 if ! kc wait --for=condition=Ready node -l '!type' --all --timeout=180s; then

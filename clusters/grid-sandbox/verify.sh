@@ -198,7 +198,21 @@ fi
 
 # --- the probe Pod, and the one assertion that is not optional ---------------
 # Deleted first so a stale Pod from an earlier run cannot answer for this one.
-kc delete pod "${PROBE_POD}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+# Bounded: a Pod under a custom runtime handler can sit Terminating, and an
+# unbounded `--wait=true` would hang this verify before its one assertion. A
+# bound is not a post-condition, so absence is ASSERTED before the apply: a
+# Pod still Terminating here would either reject the apply with kubectl's raw
+# stderr and no FAIL line, or be patched in place and have the previous run's
+# /proc/version answer for this one.
+kc delete pod "${PROBE_POD}" --ignore-not-found --wait=true --timeout=120s >/dev/null 2>&1 || true
+if kc get pod "${PROBE_POD}" >/dev/null 2>&1; then
+  echo "FAIL: the probe Pod '${PROBE_POD}' from an earlier run is still present after 120s, so a" >&2
+  echo "      stale Pod would answer for this run. Nothing was applied." >&2
+  echo "      Inspect:  kubectl --context ${CONTEXT} get pod ${PROBE_POD} -o yaml" >&2
+  echo "      Force it: kubectl --context ${CONTEXT} delete pod ${PROBE_POD} --force --grace-period=0" >&2
+  echo "      then re-run this script." >&2
+  exit 1
+fi
 kc apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: Pod

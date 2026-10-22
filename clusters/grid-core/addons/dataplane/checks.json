@@ -45,10 +45,10 @@
     },
     {
       "id": "every-image-the-layer-applies-is-digest-pinned",
-      "describe": "PLAT-01 over the layer's own object set, and the one entry here that needs no cluster: every image reference across the four path manifests carries an @sha256 digest. It counts the references as well as the unpinned ones, so a manifest set with zero image lines — a truncated or mis-read tree — cannot satisfy it either. The object-storage image is a multi-architecture INDEX digest at an exact release, so the same reference resolves on this arm64 host and on an amd64 runner",
+      "describe": "PLAT-01 over the layer's APPLIED object set, read off the six Deployments in the cluster and not off the committed templates: every container image the layer runs carries an @sha256 digest. Read from the cluster deliberately — the templates carry a placeholder where each image goes, and the value that replaces it is an env-overridable variable in run.sh, so a template scan passes while an override applies a tag-form reference. Printed as pinned/total against the exact six the layer applies, so an empty namespace or a layer that applied five of six cannot satisfy it. The object-storage image is a multi-architecture INDEX digest at an exact release, so the same reference resolves on this arm64 host and on an amd64 runner",
       "weight": 2,
-      "run": "cd \"$(git rev-parse --show-toplevel)\" && sed -n 's/^[[:space:]]*image:[[:space:]]*\\(.*\\)$/\\1/p' labs/storage/four-path/s3.yaml labs/storage/four-path/nfs.yaml labs/storage/four-path/pvc.yaml labs/storage/four-path/hostpath.yaml | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0 && index($0,\"__\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
-      "assert": { "matches": "^image_refs=[1-9][0-9]* unpinned=0$" }
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n spike-02 get deploy -o json | jq -r '[.items[] | select(.metadata.name | test(\"^(s3-server|nfs-provisioner|client-(s3|nfs|pvc|hostpath))$\")) | (.spec.template.spec.containers + (.spec.template.spec.initContainers // []))[].image] | \"images_pinned=\" + ([.[] | select(test(\"@sha256:[0-9a-f]{64}$\"))] | length | tostring) + \"/\" + (length | tostring)'",
+      "assert": { "matches": "^images_pinned=6/6$" }
     },
     {
       "id": "the-object-storage-path-is-named-for-its-protocol-and-not-for-a-vendor",

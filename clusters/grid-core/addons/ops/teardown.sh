@@ -60,11 +60,13 @@ export PATH
 
 ADDON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE_DIR="$(cd "${ADDON_DIR}/../.." && pwd)"
-LABS_DIR="$(cd "${PROFILE_DIR}/../.." && pwd)"
-LABS_TOOLS="${LABS_DIR}/tools"
 
-. "${LABS_TOOLS}/size-gate.sh"
-assert_size
+# NO SIZE ASSERT HERE, for the reason the base profile's teardown states: this
+# script reads no per-size value, and a teardown must never be the thing that
+# refuses to run — a learner who mistyped SIZE could not remove their own layer,
+# and would be left with three Deployments and their cluster-scoped RBAC
+# behind. serving/teardown.sh asserts SIZE because its fence branch genuinely
+# reads it; nothing below does.
 
 CLUSTER_NAME="grid-core"
 CONTEXT="${CONTEXT:-kind-grid-core}"

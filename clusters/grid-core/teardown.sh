@@ -36,12 +36,22 @@ export PATH
 
 CLUSTER_NAME="grid-core"
 
-# grep -qx (exact whole line), never grep -q: 'grid-core' must not match
-# 'grid-core-dra', and with grid-sandbox also in play a prefix match has
-# stopped being hypothetical.
-if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
-  kind delete cluster --name "${CLUSTER_NAME}"
-  echo "grid-core profile torn down: cluster '${CLUSTER_NAME}' deleted."
-else
-  echo "kind cluster '${CLUSTER_NAME}' already absent — nothing to do."
-fi
+# Captured and matched with `case`, never `kind get clusters | grep -q`: under
+# `pipefail` a reader that exits on its first match can return 141 (SIGPIPE) on
+# a SUCCESSFUL match, and here the false negative is the expensive direction —
+# it would print "already absent", exit 0 and leave the cluster running for the
+# next profile's create to refuse on. The newline fencing makes the match
+# EXACT: 'grid-core' must not match 'grid-core-dra', and with grid-sandbox also
+# in play a prefix match has stopped being hypothetical.
+KIND_CLUSTERS="$(kind get clusters 2>/dev/null || true)"
+case "
+${KIND_CLUSTERS}
+" in
+  *"
+${CLUSTER_NAME}
+"*)
+    kind delete cluster --name "${CLUSTER_NAME}"
+    echo "grid-core profile torn down: cluster '${CLUSTER_NAME}' deleted."
+    ;;
+  *) echo "kind cluster '${CLUSTER_NAME}' already absent — nothing to do." ;;
+esac

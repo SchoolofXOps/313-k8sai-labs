@@ -644,7 +644,14 @@ for p in ${PATHS}; do
   [ -n "${m}" ] || fail "unknown path '${p}'. Valid: s3 nfs pvc hostpath"
   [ -s "${m}" ] || fail "manifest ${m} missing or empty"
   echo "==> applying ${p} (${m##*/})"
-  sed -e "s|__CLIENT_IMAGE__|${CLIENT_IMAGE}|g" \
+  # Rendered into a variable and asserted BEFORE the apply, over the
+  # SUBSTITUTED stream — the only form that reaches the cluster. The templates
+  # carry a placeholder where every image goes, so a gate over the templates
+  # cannot see what S3_IMAGE / NFS_IMAGE / CLIENT_IMAGE resolved to, and all
+  # three are env-overridable: `S3_IMAGE=some/image:latest bash run.sh` would
+  # otherwise apply a tag-form reference while every template-level report
+  # still read "pinned". Fails closed, before `kubectl apply` sees a byte.
+  RENDERED="$(sed -e "s|__CLIENT_IMAGE__|${CLIENT_IMAGE}|g" \
       -e "s|__S3_IMAGE__|${S3_IMAGE}|g" \
       -e "s|__NFS_IMAGE__|${NFS_IMAGE}|g" \
       -e "s|__HOSTPATH_NODE__|${HOSTPATH_NODE}|g" \
@@ -652,7 +659,12 @@ for p in ${PATHS}; do
       -e "s|__PAYLOAD_LIMIT__|$((SIZE_MB + 64))Mi|g" \
       -e "s|__CLIENT_MEM_LIMIT__|$((SIZE_MB * 3 + 256))Mi|g" \
       -e "s|__NAMESPACE__|${NAMESPACE}|g" \
-      "${m}" | kcn apply -f - >/dev/null
+      "${m}")"
+  UNPINNED="$(printf '%s\n' "${RENDERED}" \
+    | sed -n 's/^[[:space:]]*image:[[:space:]]*\(.*\)$/\1/p' \
+    | /usr/bin/grep -v -E '@sha256:[0-9a-f]{64}' || true)"
+  [ -z "${UNPINNED}" ] || fail "an image reference in the SUBSTITUTED ${m##*/} is not digest-pinned: ${UNPINNED}. S3_IMAGE, NFS_IMAGE and CLIENT_IMAGE must each carry an @sha256 index digest; nothing was applied for the '${p}' path."
+  printf '%s\n' "${RENDERED}" | kcn apply -f - >/dev/null
 done
 
 echo
