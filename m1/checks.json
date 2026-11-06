@@ -1,0 +1,123 @@
+{
+  "_why": "M1 lab success end-state. Object state only: no Pod phase alone and no performance number. Every kubectl sets KUBECONFIG and the context itself. Paths are relative to the learner tree (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m1/checks.json).",
+  "truth_contract": "REAL",
+  "checks": [
+    {
+      "id": "m1-namespace-active",
+      "describe": "namespace m1-baseline exists and is Active",
+      "weight": 1,
+      "run": "printf 'ns=%s\\n' \"$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get ns m1-baseline -o jsonpath='{.status.phase}')\"",
+      "assert": {
+        "matches": "^ns=Active$"
+      }
+    },
+    {
+      "id": "device-request-unschedulable",
+      "describe": "Pod device-request's PodScheduled condition reads status=False reason=Unschedulable, read from .status.conditions and not from .status.phase",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get pod device-request -o jsonpath='status={.status.conditions[?(@.type==\"PodScheduled\")].status} reason={.status.conditions[?(@.type==\"PodScheduled\")].reason}'; echo",
+      "assert": {
+        "matches": "^status=False reason=Unschedulable$"
+      }
+    },
+    {
+      "id": "device-request-message-names-resource",
+      "describe": "the PodScheduled message names the missing extended resource",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get pod device-request -o jsonpath='{.status.conditions[?(@.type==\"PodScheduled\")].message}'; echo",
+      "assert": {
+        "matches": "^.*Insufficient nvidia\\.com/gpu"
+      }
+    },
+    {
+      "id": "sim-has-no-readiness-probe",
+      "describe": "Deployment sim's container sim carries no readinessProbe",
+      "weight": 2,
+      "run": "sh -c 'set -e; n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get deploy sim -o jsonpath=\"{.spec.template.spec.containers[?(@.name==\\\"sim\\\")].name}\"); p=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get deploy sim -o jsonpath=\"{.spec.template.spec.containers[?(@.name==\\\"sim\\\")].readinessProbe}\"); if [ -z \"$p\" ]; then echo \"container=$n readinessProbe=none\"; else echo \"container=$n readinessProbe=set\"; fi'",
+      "assert": {
+        "matches": "^container=sim readinessProbe=none$"
+      }
+    },
+    {
+      "id": "sim-binary-from-pinned-image-volume",
+      "describe": "volume simulator's image.reference equals the pinned simulator digest",
+      "weight": 1,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get deploy sim -o jsonpath='{.spec.template.spec.volumes[?(@.name==\"simulator\")].image.reference}'; echo",
+      "assert": {
+        "matches": "^ghcr\\.io/llm-d/llm-d-inference-sim@sha256:32144df791330a0006b747edfdf2b114a0fe728e023a9d1b3463eeb48d32abb9$"
+      }
+    },
+    {
+      "id": "sim-startup-states-logged",
+      "describe": "the sim Pod's log carries both startup-state=loading and startup-state=serving",
+      "weight": 1,
+      "run": "sh -c 'l=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline logs deploy/sim -c sim); a=$(printf \"%s\\n\" \"$l\" | grep -c \"^startup-state=loading\"); b=$(printf \"%s\\n\" \"$l\" | grep -c \"^startup-state=serving\"); echo \"loading=$a serving=$b\"'",
+      "assert": {
+        "matches": "^loading=[1-9][0-9]* serving=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "sim-endpoint-serving",
+      "describe": "the EndpointSlice for Service sim lists at least one endpoint with ready=true",
+      "weight": 1,
+      "run": "sh -c 'n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get endpointslices -l kubernetes.io/service-name=sim -o jsonpath=\"{.items[*].endpoints[*].conditions.ready}\" | tr \" \" \"\\n\" | grep -c true); echo \"ready_endpoints=$n\"'",
+      "assert": {
+        "matches": "^ready_endpoints=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "metrics-server-available",
+      "describe": "APIService v1beta1.metrics.k8s.io reports Available=True",
+      "weight": 2,
+      "run": "printf 'Available=%s\\n' \"$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get apiservice v1beta1.metrics.k8s.io -o jsonpath='{.status.conditions[?(@.type==\"Available\")].status}')\"",
+      "assert": {
+        "matches": "^Available=True$"
+      }
+    },
+    {
+      "id": "hpa-cpu-target-with-current-metric",
+      "describe": "HPA sim has one Resource metric cpu at averageUtilization 50 and status.currentMetrics holds a number",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get hpa sim -o jsonpath='{.spec.metrics[*].type} {.spec.metrics[0].resource.name} {.spec.metrics[0].resource.target.averageUtilization} {.status.currentMetrics[0].resource.current.averageUtilization}'; echo",
+      "assert": {
+        "matches": "^Resource cpu 50 [0-9]+$"
+      }
+    },
+    {
+      "id": "queue-depth-readable-via-service-proxy",
+      "describe": "the simulator's queue-depth metric is readable through the API server's service proxy",
+      "weight": 1,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get --raw /api/v1/namespaces/m1-baseline/services/sim:8000/proxy/metrics | grep -E '^vllm:num_requests_waiting'",
+      "assert": {
+        "matches": "^vllm:num_requests_waiting\\{model_name=\"m1-sim\"\\} [0-9]+"
+      }
+    },
+    {
+      "id": "baseline-failures-three-sections",
+      "describe": "baseline-failures.md holds the three fixed headings in order",
+      "weight": 2,
+      "run": "sh -c 'grep \"^## \" grid-platform/docs/baseline-failures.md | tr \"\\n\" \"|\"; echo'",
+      "assert": {
+        "matches": "^## A device request no node can satisfy\\|## A slow-starting server behind a Service with no readiness gate\\|## An autoscaler watching CPU while the queue grows\\|$"
+      }
+    },
+    {
+      "id": "grid-core-wrappers-exec-single-source",
+      "describe": "each wrapper exists and, with comment lines stripped, execs clusters/grid-core/<same-name>.sh",
+      "weight": 1,
+      "run": "sh -c 'for n in create verify teardown; do f=grid-platform/clusters/grid-core/$n.sh; if [ -f \"$f\" ] && grep -v \"^[[:space:]]*#\" \"$f\" | grep -q \"exec bash .*clusters/grid-core/$n\\.sh\"; then printf \"$n=exec \"; else printf \"$n=missing \"; fi; done; echo'",
+      "assert": {
+        "matches": "^create=exec verify=exec teardown=exec ?$"
+      }
+    },
+    {
+      "id": "grid-core-profile-record",
+      "describe": "PROFILE.md records SIZE, a sha256 node-image digest and the verify.sh OK line",
+      "weight": 2,
+      "run": "sh -c 'f=grid-platform/clusters/grid-core/PROFILE.md; a=$(grep -cE \"^SIZE=[0-9]+$\" \"$f\"); b=$(grep -cE \"sha256:[0-9a-f]{64}\" \"$f\"); c=$(grep -c \"^OK: grid-core verified\" \"$f\"); echo \"size=$a digest=$b ok=$c\"'",
+      "assert": {
+        "matches": "^size=[1-9][0-9]* digest=[1-9][0-9]* ok=[1-9][0-9]*$"
+      }
+    }
+  ]
+}

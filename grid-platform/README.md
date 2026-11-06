@@ -4,11 +4,14 @@ One Git repository the learner grows by hand, one layer per module, from an empt
 be read correctly to a platform that stays standing when three teams collide. By M13 this
 repository **is** the portfolio artifact a learner shows at interview.
 
-It grows in place. There is no per-module fresh checkout and no provided snapshot, because a
-snapshot would hand the learner the state that the labs exist to make them produce. Continuity
-lives in this repository's history and its reference tags, not in a cluster left running — an 8 GB
-laptop cannot keep the platform up between sessions, and platform teams do not work that way
-either.
+It grows in place. There is no per-module fresh checkout, and the `main` you clone carries no
+snapshot of any module's end state, because a snapshot on `main` would hand every new learner the
+state that the labs exist to make them produce. The course's end states live somewhere else: the
+`grid-v*` reference tags, on a separate `grid-reference` branch of the public repository, which you
+check out only when you start mid-course or want to compare (see the reference-tag convention
+below). Continuity lives in this repository's history and in those tags, not in a cluster left
+running — an 8 GB laptop cannot keep the platform up between sessions, and platform teams do not
+work that way either.
 
 ## What this directory contains today
 
@@ -38,11 +41,34 @@ tag that exists only in the private authoring repository is unreachable for the 
 for. This directory is where the tree is **authored**; the public repository is where it is
 **consumed**, and the reference points have to exist where they are consumed.
 
+**The tags live on the public `grid-reference` branch, never on `main`.** `main` stays the seed:
+twelve directories, a README each, no answers. Each cut merges the current `main` into
+`grid-reference` with an ordinary merge, adds one commit carrying the module's end-state files, and
+puts an annotated `grid-v*` tag on that commit. Pushes are fast-forward only; a published tag is
+never moved.
+
 The sync direction is one-way, private to public, through `scripts/sync-grid.mjs`. That script
 strips the leading `labs/` segment, so this tree lands at `grid-platform/` at the public
 repository's root — matching the convention the public repository already uses for every other lab
-directory. It copies only; cutting a reference point and publishing one are the ship path's job in
-a later phase.
+directory. It copies only, and it publishes only `labs/`. The end-state files a tag adds are
+authored outside `labs/` in the private source repository, so the sync can never carry them to
+`main`; the cut copies them onto `grid-reference` by hand.
+
+**Starting mid-course.** From a current `main` checkout, fetch the course's tags and restore only
+this directory from the reference point:
+
+```bash
+git fetch --tags && git checkout grid-v0 -- grid-platform
+```
+
+If you have already renamed the course's remote to `upstream`, as the setup page asks, fetch from it
+by name: `git fetch upstream --tags`. Restoring `grid-platform` alone keeps the current lab scripts
+under `clusters/` and `tools/`. A whole-tree `git checkout grid-v0` would pin you to the scripts as
+they were when the tag was cut.
+
+**Learners never cut `grid-v*` tags.** That name space is the course's. Your clone fetches the
+course's tags, so a `grid-v0` of your own collides with it. Commit with the module named in the
+message (for example `m1: baseline failures recorded`) and push to a remote you own.
 
 ## Version progression
 
@@ -90,9 +116,10 @@ saying who writes what, or the property it breaks is invisible until the phase t
 
 ## What deliberately does not exist yet
 
-**The capability-per-version status page.** It reports, for each reference point, what the platform
-can do, what is still broken, and which module fixes it — and that data does not exist until the
-modules are authored. Writing it now would mean inventing the capability rows, which is the one
-thing this course's evidence rules forbid. Phase 4 owns it, alongside the first reference point.
+**Capability rows for reference points not yet validated.** The capability-per-version page
+(Reference → Capability by version on the course site) reports, for each reference point, what the
+platform can do, what is still broken, and which module fixes it. A row appears only after its
+module's lab checks have passed on a live run; `grid-v0` is the first. Writing a row earlier would
+mean inventing capabilities, which is the one thing this course's evidence rules forbid.
 
 **Every lab artifact.** Twelve empty addresses and no manifests. Phases 4 through 9 fill them.

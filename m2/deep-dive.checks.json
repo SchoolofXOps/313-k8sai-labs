@@ -1,0 +1,42 @@
+{
+  "_why": "M2 deep-dive end-state. Arithmetic only, state-tolerant, no cluster. Run after labs/m2/checks.json from the learner tree: (cd labs && node ../scripts/run-checks.mjs m2/deep-dive.checks.json).",
+  "truth_contract": "SIMULATED",
+  "checks": [
+    {
+      "id": "dd-kv-blocks-runs",
+      "describe": "the paged-block calculator exits 0, prints the assumptions header, a block count and a fragmentation figure",
+      "weight": 2,
+      "run": "sh -c 'o=$(bash m2/kv-blocks.sh m2/inputs/models/qwen2.5-7b-instruct.conf m2/inputs/vram-scenario.conf); echo \"first=$(printf \"%s\\n\" \"$o\" | head -n 1 | cut -c1-11) blocks=$(printf \"%s\\n\" \"$o\" | grep -c \"^mean_blocks_per_request=[0-9.]*$\") fragmentation=$(printf \"%s\\n\" \"$o\" | grep -c \"^paged_fragmentation_pct=[0-9.]*$\")\"'",
+      "assert": {
+        "matches": "^first=ASSUMPTIONS blocks=1 fragmentation=1$"
+      }
+    },
+    {
+      "id": "dd-decode-bound-labelled-estimate",
+      "describe": "the decode bound prints one line per accelerator, every one ending (estimate), and 219.9 for the H100 SXM row",
+      "weight": 3,
+      "run": "sh -c 'o=$(bash m2/decode-bound.sh m2/inputs/models/qwen2.5-7b-instruct.conf | sed -n \"/^RESULTS/,\\$p\" | sed 1d); n=$(printf \"%s\\n\" \"$o\" | grep -c .); e=$(printf \"%s\\n\" \"$o\" | grep -c \"(estimate)$\"); h=$(printf \"%s\\n\" \"$o\" | grep \"^h100_sxm\" | grep -c \"= *219\\.9 tokens/s (estimate)$\"); echo \"lines=$n estimates=$e h100=$h\"'",
+      "assert": {
+        "matches": "^lines=8 estimates=8 h100=1$"
+      }
+    },
+    {
+      "id": "dd-decode-bound-printed-arithmetic",
+      "describe": "every decode-bound line, for the 7B and the 72B model, prints a bandwidth, a weight size and a bound that agree: dividing the two printed operands and rounding to one decimal gives the printed bound",
+      "weight": 2,
+      "run": "for m in qwen2.5-7b-instruct qwen2.5-72b-instruct; do bash m2/decode-bound.sh m2/inputs/models/$m.conf | sed -n '/^RESULTS/,$p' | sed 1d; done | awk '{ for (j = 1; j <= NF; j++) if ($j == \"GB/s\") break; if ($(j+1) != \"/\" || $(j+3) != \"GB\" || $(j+4) != \"=\") { bad++; next } n++; if (sprintf(\"%.1f\", $(j-1) / $(j+2)) == $(j+5)) ok++ } END { printf \"rows=%d consistent=%d malformed=%d\\n\", n, ok, bad + 0 }'",
+      "assert": {
+        "matches": "^rows=16 consistent=16 malformed=0$"
+      }
+    },
+    {
+      "id": "dd-allreduce-runs",
+      "describe": "the all-reduce calculator exits 0, prints the assumptions header and one time per link class",
+      "weight": 2,
+      "run": "sh -c 'o=$(bash m2/allreduce.sh m2/inputs/interconnect.conf); echo \"first=$(printf \"%s\\n\" \"$o\" | head -n 1 | cut -c1-11) times=$(printf \"%s\\n\" \"$o\" | grep -c \"time_s=[0-9.]* (estimate)$\")\"'",
+      "assert": {
+        "matches": "^first=ASSUMPTIONS times=4$"
+      }
+    }
+  ]
+}

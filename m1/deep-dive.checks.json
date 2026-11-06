@@ -1,0 +1,42 @@
+{
+  "_why": "M1 deep-dive end-state. Object state only, state-tolerant: each check reads objects the page seeds (device-request, sim, a server-side dry run that stores nothing). Run after labs/m1/checks.json from the learner tree: (cd labs && node ../scripts/run-checks.mjs m1/deep-dive.checks.json).",
+  "truth_contract": "REAL",
+  "checks": [
+    {
+      "id": "dd-failedscheduling-event-recorded",
+      "describe": "at least one FailedScheduling Event exists for Pod device-request",
+      "weight": 2,
+      "run": "sh -c 'n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get events --field-selector involvedObject.name=device-request,reason=FailedScheduling -o name | wc -l | tr -d \" \"); echo \"failedscheduling_events=$n\"'",
+      "assert": {
+        "matches": "^failedscheduling_events=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "dd-failedscheduling-names-device",
+      "describe": "a FailedScheduling Event for Pod device-request names the missing device (Insufficient nvidia.com/gpu): the Event keeps its first failure's message, so this fails when the Pod was scheduled against a worker that was not yet Ready",
+      "weight": 2,
+      "run": "sh -c 'KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get events --field-selector involvedObject.name=device-request,reason=FailedScheduling -o jsonpath=\"{.items[*].message}\"; echo'",
+      "assert": {
+        "matches": "Insufficient nvidia\\.com/gpu"
+      }
+    },
+    {
+      "id": "dd-endpointslice-conditions-readable",
+      "describe": "the EndpointSlice for sim exposes ready, serving and terminating on its first endpoint",
+      "weight": 2,
+      "run": "sh -c 'KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m1-baseline get endpointslices -l kubernetes.io/service-name=sim -o jsonpath=\"{range .items[*].endpoints[*]}ready={.conditions.ready} serving={.conditions.serving} terminating={.conditions.terminating}{\\\"\\\\n\\\"}{end}\" | head -1'",
+      "assert": {
+        "matches": "^ready=(true|false) serving=(true|false) terminating=(true|false)$"
+      }
+    },
+    {
+      "id": "dd-hpa-tolerance-accepted",
+      "describe": "a server-side dry-run HPA with spec.behavior.scaleUp.tolerance is accepted and echoes the normalised quantity 50m (HPAConfigurableTolerance, GA in 1.37)",
+      "weight": 3,
+      "run": "sh -c 'printf \"apiVersion: autoscaling/v2\\nkind: HorizontalPodAutoscaler\\nmetadata:\\n  name: sim-tolerance-check\\n  namespace: m1-baseline\\nspec:\\n  scaleTargetRef:\\n    apiVersion: apps/v1\\n    kind: Deployment\\n    name: sim\\n  minReplicas: 1\\n  maxReplicas: 4\\n  metrics:\\n    - type: Resource\\n      resource:\\n        name: cpu\\n        target:\\n          type: Utilization\\n          averageUtilization: 50\\n  behavior:\\n    scaleUp:\\n      tolerance: \\\"0.05\\\"\\n\" | KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core apply --dry-run=server -f - -o jsonpath=\"{.spec.behavior.scaleUp}\"; echo'",
+      "assert": {
+        "matches": "\"tolerance\":\"50m\""
+      }
+    }
+  ]
+}

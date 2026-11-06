@@ -1,0 +1,150 @@
+{
+  "_why": "M2 lab success end-state. Arithmetic only: no cluster, no device, and no check asserts anything measured. The shipped-input values are asserted because they are hardware-independent. Paths are relative to the learner tree root (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m2/checks.json).",
+  "truth_contract": "SIMULATED",
+  "checks": [
+    {
+      "id": "vram-budget-prints-assumptions",
+      "describe": "the VRAM budget calculator exits 0 and its first line is the fixed assumptions literal",
+      "weight": 1,
+      "run": "bash m2/vram-budget.sh m2/inputs/models/qwen2.5-7b-instruct.conf m2/inputs/vram-scenario.conf > /dev/null && bash m2/vram-budget.sh m2/inputs/models/qwen2.5-7b-instruct.conf m2/inputs/vram-scenario.conf | head -n 1",
+      "assert": {
+        "matches": "^ASSUMPTIONS \\(an estimate from stated inputs, not a measurement\\):$"
+      }
+    },
+    {
+      "id": "vram-budget-qwen7b-arithmetic",
+      "describe": "the shipped inputs model weights 15.23 GB, 57344 cache bytes per token and 25.02 GB in total",
+      "weight": 2,
+      "run": "bash m2/vram-budget.sh m2/inputs/models/qwen2.5-7b-instruct.conf m2/inputs/vram-scenario.conf | grep -E '^(weights_gb|kv_bytes_per_token|total_gb)=' | tr '\\n' ' '",
+      "assert": {
+        "matches": "^weights_gb=15\\.23 kv_bytes_per_token=57344 total_gb=25\\.02 ?$"
+      }
+    },
+    {
+      "id": "vram-budget-gqa-contrast",
+      "describe": "Mistral-7B, with eight key-value heads, models 131072 cache bytes per token",
+      "weight": 1,
+      "run": "bash m2/vram-budget.sh m2/inputs/models/mistral-7b-instruct-v0.3.conf m2/inputs/vram-scenario.conf | grep '^kv_bytes_per_token='",
+      "assert": {
+        "matches": "^kv_bytes_per_token=131072$"
+      }
+    },
+    {
+      "id": "capacity-prints-assumptions",
+      "describe": "the capacity calculator exits 0 and its first line is the fixed assumptions literal",
+      "weight": 1,
+      "run": "bash m2/capacity.sh m2/inputs/demand.conf > /dev/null && bash m2/capacity.sh m2/inputs/demand.conf | head -n 1",
+      "assert": {
+        "matches": "^ASSUMPTIONS \\(an estimate from stated inputs, not a measurement\\):$"
+      }
+    },
+    {
+      "id": "capacity-prints-sensitivity",
+      "describe": "the sensitivity table has one row for each of the seven varied inputs",
+      "weight": 2,
+      "run": "echo \"rows=$(bash m2/capacity.sh m2/inputs/demand.conf | sed -n '/^SENSITIVITY/,$p' | grep -Ec '^(arrival_rate_rps|mean_latency_s|context_tokens|tokens_per_request|tokens_per_second_per_replica|failure_reserve_fraction|fragmentation_fraction) ')\"",
+      "assert": {
+        "matches": "^rows=7$"
+      }
+    },
+    {
+      "id": "cost-model-prints-assumptions",
+      "describe": "the cost calculator exits 0, prints the assumptions literal first, and labels prices replace with your own quote",
+      "weight": 1,
+      "run": "bash m2/cost-model.sh m2/inputs/cost.conf > /dev/null && echo \"first=$(bash m2/cost-model.sh m2/inputs/cost.conf | head -n 1)\" && bash m2/cost-model.sh m2/inputs/cost.conf | grep -c 'replace with your own quote' | sed 's/^/quote_lines=/'",
+      "assert": {
+        "matches": "^first=ASSUMPTIONS \\(an estimate from stated inputs, not a measurement\\):$"
+      }
+    },
+    {
+      "id": "cost-model-labels-prices-as-assumptions",
+      "describe": "the header carries the literal replace with your own quote at least once",
+      "weight": 1,
+      "run": "echo \"quote_lines=$(bash m2/cost-model.sh m2/inputs/cost.conf | grep -c 'replace with your own quote')\"",
+      "assert": {
+        "matches": "^quote_lines=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "cost-model-fleet-arithmetic",
+      "describe": "the shipped inputs model an annual cost of 2242560 USD, 80.00 USD per useful accelerator-hour at 0.05 and 6.67 at 0.60",
+      "weight": 2,
+      "run": "bash m2/cost-model.sh m2/inputs/cost.conf | grep -E '^(annual_fleet_cost_usd=|low +utilisation=0\\.05 |high +utilisation=0\\.60 )' | sed -E 's/ +/ /g; s/useful_accel_hours=[0-9]+ //; s/useful_tokens_per_usd=[0-9]+//' | tr '\\n' '|'",
+      "assert": {
+        "matches": "^annual_fleet_cost_usd=2242560\\|low utilisation=0\\.05 cost_usd=2242560 usd_per_useful_accel_hour=80\\.00 \\|high utilisation=0\\.60 cost_usd=2242560 usd_per_useful_accel_hour=6\\.67 \\|$"
+      }
+    },
+    {
+      "id": "cost-model-lever-arithmetic-adds-up",
+      "describe": "with the shipped inputs, pack's and reclaim's cost plus saving each equal the annual fleet cost, and reclaim's cost is the hours left after the returned idle hours at the stated price",
+      "weight": 1,
+      "run": "bash m2/cost-model.sh m2/inputs/cost.conf | awk '/^annual_fleet_cost_usd=/{split($0,a,\"=\");t=a[2]} /^accelerator_hours_per_year=/{split($0,a,\"=\");h=a[2]} /^price_basis=/{split($2,a,\"=\");p=a[2]} /^(pack|reclaim) /{c=\"\";s=\"\";r=\"\";for(i=2;i<=NF;i++){split($i,kv,\"=\");if(kv[1]==\"cost_usd\")c=kv[2];if(kv[1]==\"saving_usd\")s=kv[2];if(kv[1]==\"idle_hours_returned\")r=kv[2]} v=(c+s==t)?\"adds-up\":\"off-by-\" (t-c-s); if($1==\"reclaim\")v=v \",hours-\" ((c==int((h-r)*p+0.5))?\"match\":\"off-by-\" (int((h-r)*p+0.5)-c)); printf \"%s=%s \", $1, v} END{print \"\"}'",
+      "assert": {
+        "matches": "^pack=adds-up reclaim=adds-up,hours-match $"
+      }
+    },
+    {
+      "id": "calculators-rerun-identical",
+      "describe": "each of the three lab calculators, run twice on the same inputs, prints byte-identical output",
+      "weight": 2,
+      "run": "sh -c 'ok=0; a=$(bash m2/vram-budget.sh m2/inputs/models/qwen2.5-7b-instruct.conf m2/inputs/vram-scenario.conf); b=$(bash m2/vram-budget.sh m2/inputs/models/qwen2.5-7b-instruct.conf m2/inputs/vram-scenario.conf); [ -n \"$a\" ] && [ \"$a\" = \"$b\" ] && ok=$((ok+1)); a=$(bash m2/capacity.sh m2/inputs/demand.conf); b=$(bash m2/capacity.sh m2/inputs/demand.conf); [ -n \"$a\" ] && [ \"$a\" = \"$b\" ] && ok=$((ok+1)); a=$(bash m2/cost-model.sh m2/inputs/cost.conf); b=$(bash m2/cost-model.sh m2/inputs/cost.conf); [ -n \"$a\" ] && [ \"$a\" = \"$b\" ] && ok=$((ok+1)); echo \"identical=$ok\"'",
+      "assert": {
+        "matches": "^identical=3$"
+      }
+    },
+    {
+      "id": "calculators-bash-and-awk-only",
+      "describe": "with comment lines stripped, no calculator calls python, node, bc or jq, or sources a file under inputs",
+      "weight": 2,
+      "run": "if cat m2/*.sh m2/lib/*.sh | grep -v '^[[:space:]]*#' | grep -Eq '(^|[^A-Za-z0-9_./-])(python3?|node|bc|jq)([^A-Za-z0-9_-]|$)|^[[:space:]]*(source|\\.)[[:space:]]+[^#]*inputs'; then echo \"tools=forbidden-found\"; else echo \"tools=bash-awk-only\"; fi",
+      "assert": {
+        "matches": "^tools=bash-awk-only$"
+      }
+    },
+    {
+      "id": "calculators-touch-no-cluster",
+      "describe": "with comment lines stripped, no calculator calls kubectl, kind, docker or helm",
+      "weight": 1,
+      "run": "if cat m2/*.sh m2/lib/*.sh | grep -v '^[[:space:]]*#' | grep -Eq '(^|[^A-Za-z0-9_./-])(kubectl|kind|docker|helm)([^A-Za-z0-9_-]|$)'; then echo \"cluster=touched\"; else echo \"cluster=untouched\"; fi",
+      "assert": {
+        "matches": "^cluster=untouched$"
+      }
+    },
+    {
+      "id": "capacity-model-sections",
+      "describe": "grid-platform/docs/capacity-model.md holds the four fixed headings, in order",
+      "weight": 2,
+      "run": "awk '/^## Demand inputs$/{a=NR} /^## Fleet recommendation$/{b=NR} /^## Sensitivity$/{c=NR} /^## Uncertainty$/{d=NR} END{ if (a && b>a && c>b && d>c) print \"capacity_sections=ordered\"; else print \"capacity_sections=missing-or-out-of-order\" }' grid-platform/docs/capacity-model.md",
+      "assert": {
+        "matches": "^capacity_sections=ordered$"
+      }
+    },
+    {
+      "id": "capacity-model-sensitivity-filled",
+      "describe": "the Sensitivity section holds the calculator table, one row per varied input",
+      "weight": 1,
+      "run": "awk '/^## Sensitivity$/{s=1; next} /^## /{s=0} s && /^(arrival_rate_rps|mean_latency_s|context_tokens|tokens_per_request|tokens_per_second_per_replica|failure_reserve_fraction|fragmentation_fraction) /{n++} END{print \"sensitivity_rows=\" n+0}' grid-platform/docs/capacity-model.md",
+      "assert": {
+        "matches": "^sensitivity_rows=7$"
+      }
+    },
+    {
+      "id": "capacity-model-uncertainty-names-unit-gap",
+      "describe": "the Uncertainty section names the GB versus GiB unit gap",
+      "weight": 1,
+      "run": "awk '/^## Uncertainty$/{s=1; next} /^## /{s=0} s && /GiB/{n++} END{print \"unit_gap_lines=\" n+0}' grid-platform/docs/capacity-model.md",
+      "assert": {
+        "matches": "^unit_gap_lines=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "cost-model-sections",
+      "describe": "grid-platform/docs/cost-model.md holds the two fixed headings and the four lever headings, in order",
+      "weight": 2,
+      "run": "awk '/^## Fleet cost at 5% and at 60% utilisation$/{a=NR} /^## The four levers$/{b=NR} /^### Share$/{c=NR} /^### Queue$/{d=NR} /^### Pack$/{e=NR} /^### Reclaim$/{f=NR} END{ if (a && b>a && c>b && d>c && e>d && f>e) print \"cost_sections=ordered\"; else print \"cost_sections=missing-or-out-of-order\" }' grid-platform/docs/cost-model.md",
+      "assert": {
+        "matches": "^cost_sections=ordered$"
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ the three scripts that drive it.
 
 | What lands here | Owning module |
 |---|---|
-| the base profile — `kind` config, `create.sh`, `verify.sh`, `teardown.sh` | M1 |
+| the base profile — one-line wrappers that `exec` the single-source scripts, plus `PROFILE.md` | M1 |
 | one additional profile subdirectory per module whose lab needs a different cluster shape | M1–M13 |
 
 **MULTI-WRITER EXCEPTION:** this directory is written by more than one module, and that is a

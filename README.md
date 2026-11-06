@@ -45,7 +45,20 @@ leaves the cluster standing; the base profile's `teardown.sh` deletes the cluste
 `grid-platform/` is the repository you grow by hand, one layer per module. It ships as **twelve
 documented addresses and no lab artifacts** — each directory's `README.md` says what lands there,
 which module writes it, and what does **not** land there. That is deliberate: a provided snapshot
-would hand you the state the labs exist to make you produce.
+would hand you the state the labs exist to make you produce. If you start mid-course,
+`grid-platform/README.md` shows how to restore one module's end state from a `grid-v*` reference
+tag without touching the scripts you already have.
+
+## Per-module lab assets
+
+Each module's lab page tells you which of these to run, and from where. Run them from this
+repository's root, like everything else here.
+
+| Path | What it is |
+|---|---|
+| `m1/` | Module 1's lab: the namespace, simulator, client, HPA and metrics-server manifests, the load script, and the lab's checks files |
+| `m2/` | Module 2's lab: the sizing calculators, the input files they read, and the lab's checks files. They are plain shell arithmetic and need no cluster |
+| `tools/xray/` | Cluster X-Ray, a live view of your own cluster in the browser: `bash tools/xray/serve.sh`. Its `README.md` says what each lens shows |
 
 ## Shared helpers
 

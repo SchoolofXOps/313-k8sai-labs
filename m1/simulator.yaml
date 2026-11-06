@@ -1,0 +1,115 @@
+# simulator.yaml — the instrumented simulator behind a Service, with NO readiness probe.
+#
+# Truth Contract: REAL for the API behaviour, instrumented for the startup window. The
+# 'startup-state=' lines come from a shell wrapper (busybox) and are instrumentation,
+# not a model load. Nothing here is a model server. Latency figures are modelled by the
+# simulator from the upstream profile below and are never a measurement.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sim-latency-profile
+  namespace: m1-baseline
+data:
+  # VERBATIM COPY of the profile in labs/serving/sim-router/sim.yaml (upstream
+  # manifests/latency-profiles/small-l40s-edge-per-token.yaml at v0.11.2). Not one value is altered.
+  latency-profile.yaml: |
+    # Profile 3: Small (1-3B) model on L40S, low-latency edge (per-token calculator).
+    # Same target deployment as the constant calculator, but TTFT and KV-transfer scale with prompt
+    # length.
+    # See docs/latency-profiles.md for the full discussion.
+
+    port: 8000
+    model: "meta-llama/Llama-3.2-3B-Instruct"
+    max-num-seqs: 4
+    mode: "random"
+    latency-calculator: per-token
+
+    inter-token-latency: 15ms
+    inter-token-latency-std-dev: 2ms
+
+    prefill-overhead: 20ms
+    prefill-time-per-token: 350us
+    prefill-time-std-dev: 3ms
+
+    kv-cache-transfer-time-per-token: 12us
+    kv-cache-transfer-time-std-dev: 500us
+
+    time-factor-under-load: 1.5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sim
+  namespace: m1-baseline
+  labels:
+    app: sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sim
+  template:
+    metadata:
+      labels:
+        app: sim
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: sim
+          image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+          env:
+            - name: STARTUP_SECONDS
+              value: "60"
+          command:
+            - sh
+            - -c
+            - |
+              trap 'echo "startup-state=stopped (SIGTERM during the window)"; exit 0' TERM
+              echo "startup-state=loading (instrumentation: a timed wait of ${STARTUP_SECONDS}s, not a model load)"
+              i=0
+              while [ "$i" -lt "$STARTUP_SECONDS" ]; do
+                sleep 5 & wait $!
+                i=$((i + 5))
+                echo "startup-state=loading elapsed=${i}s of ${STARTUP_SECONDS}s"
+              done
+              echo "startup-state=serving (exec llm-d-inference-sim; port 8000 opens once it has started)"
+              exec /sim/app/llm-d-inference-sim --config=/config/latency-profile.yaml --model=m1-sim --force-dummy-tokenizer=true --port=8000
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: simulator
+              mountPath: /sim
+              readOnly: true
+            - name: latency-profile
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: simulator
+          image:
+            reference: ghcr.io/llm-d/llm-d-inference-sim@sha256:32144df791330a0006b747edfdf2b114a0fe728e023a9d1b3463eeb48d32abb9
+            pullPolicy: IfNotPresent
+        - name: latency-profile
+          configMap:
+            name: sim-latency-profile
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sim
+  namespace: m1-baseline
+spec:
+  selector:
+    app: sim
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

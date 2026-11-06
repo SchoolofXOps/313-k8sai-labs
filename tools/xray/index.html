@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cluster X-Ray</title>
+<!--
+  Cluster X-Ray for course 313. Served by `kubectl proxy --www` (see serve.sh), so every request
+  below goes to the learner's OWN API server, same origin, with the learner's own kubeconfig.
+
+  Self-contained by mechanical assertion (STANDARDS C11, rules 5 and 7, extended to live tools):
+  every CSS rule and every line of JavaScript is inline, no font is fetched, no image element is
+  used, and no reference leaves this file. The page only ever issues GET requests.
+
+  Ported from 304-kubeadv's X-Ray. Kept: the LIST-then-WATCH machinery with the WebSocket transport
+  and its fetch-stream fallback, the one-at-a-time pollers, the connection indicator and the visual
+  idioms. Dropped: 304's Reconciliation, Control-Plane and Storage lenses, which teach control-plane
+  internals that 313 leaves to 304. Later 313 lenses appear as greyed tabs only.
+-->
+<style>
+  :root{
+    --bg:#0d1220; --panel:#151c2e; --panel2:#111827; --line:#26324e; --line2:#1c2740;
+    --txt:#dbe4f5; --dim:#8494b3; --faint:#5a6a8c;
+    --accent:#4cc9f0; --accent2:#7b6cf6;
+    --ok:#3ddc97; --warn:#f5b942; --bad:#ff6b6b; --pend:#f5b942; --creat:#4cc9f0; --gray:#8494b3;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{font-size:clamp(10.5px,0.4vw + 9.1px,16px)}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--txt);
+    font:1rem/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow:hidden;
+  }
+  #app{display:flex;flex-direction:column;height:100%;padding:8px 10px;gap:6px}
+  code{font-family:var(--mono);font-size:.84em;color:var(--accent);background:rgba(76,201,240,.08);padding:0 4px;border-radius:4px}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:center;gap:12px;flex:0 0 auto;flex-wrap:wrap}
+  header h1{font-size:1.05rem;font-weight:650;letter-spacing:.2px;white-space:nowrap}
+  header h1 .k8s{color:var(--accent)}
+  header h1 .lens{color:var(--accent2);font-weight:600}
+  #tabs{display:flex;gap:4px;flex-wrap:wrap}
+  .tab{font-size:.8rem;padding:3px 10px;border-radius:7px;border:1px solid var(--line);
+    color:var(--dim);background:none;white-space:nowrap}
+  .tab.active{border-color:var(--accent);color:var(--accent);background:rgba(76,201,240,.08)}
+  .tab.stub{opacity:.45;cursor:not-allowed}
+  .tab.stub small{color:var(--faint);font-size:.68rem;margin-left:4px}
+  #hdrRight{display:flex;align-items:center;gap:10px;margin-left:auto;font-family:var(--mono);font-size:.8rem;color:var(--faint)}
+  #brand{white-space:nowrap}
+  #watchInd{display:flex;align-items:center;gap:6px;padding:2px 9px;border-radius:9px;border:1px solid var(--line)}
+  #watchInd .wdot{width:.55rem;height:.55rem;border-radius:50%;background:var(--faint)}
+  #watchInd.connected .wdot{background:var(--ok)}
+  #watchInd.connected{color:var(--ok);border-color:rgba(61,220,151,.4)}
+  #watchInd.resync .wdot{background:var(--warn);animation:blink .8s infinite}
+  #watchInd.resync{color:var(--warn);border-color:rgba(245,185,66,.4)}
+  @keyframes blink{50%{opacity:.3}}
+  #verInfo{white-space:nowrap}
+
+  /* ---------- toolbar ---------- */
+  #bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;
+    background:linear-gradient(90deg,rgba(123,108,246,.14),rgba(76,201,240,.07));
+    border:1px solid #3a3f6e;border-radius:8px;padding:4px 11px;min-height:32px}
+  #bar .tag{font-size:.8rem;font-weight:700;letter-spacing:.8px;color:var(--accent2);
+    text-transform:uppercase;white-space:nowrap}
+  #nsName{font-family:var(--mono);font-size:.88rem;background:var(--panel2);color:var(--txt);
+    border:1px solid var(--line);border-radius:6px;padding:2px 8px;white-space:nowrap}
+  #barHint{flex:1;color:var(--dim);font-size:.86rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---------- panels ---------- */
+  .panel{background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:7px 10px;min-height:0}
+  .panel h2{font-size:.76rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+  .panel h2 .soft{letter-spacing:0;text-transform:none;color:var(--line);font-weight:600}
+  #m1Main{flex:1 1 auto;display:grid;min-height:0;gap:6px;
+    grid-template-columns:minmax(260px,1fr) minmax(340px,1.5fr) minmax(280px,1.1fr)}
+  #pendPanel,#epPanel,#hpaPanel{display:flex;flex-direction:column;min-height:0}
+  .pbody{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;scrollbar-width:thin;min-height:0}
+  .pmeta{font-family:var(--mono);font-size:.7rem;color:var(--faint);margin-top:5px;flex:0 0 auto}
+
+  /* the named degrade message — never a blank panel */
+  .msg{border:1px dashed rgba(245,185,66,.5);border-radius:9px;padding:9px 11px;
+    color:var(--warn);font-size:.86rem;line-height:1.55;background:rgba(245,185,66,.06)}
+  .msg.info{border-color:var(--line);color:var(--dim);background:none}
+  .msg.bad{border-color:rgba(255,107,107,.55);color:#ff9d9d;background:rgba(255,107,107,.06)}
+  .msg b{color:var(--txt)}
+
+  /* pending pod cards */
+  .pend{border:1px solid rgba(245,185,66,.5);border-radius:9px;background:var(--panel2);padding:7px 9px;
+    flex:0 0 auto;animation:pop .35s cubic-bezier(.2,1.6,.4,1)}
+  @keyframes pop{0%{transform:scale(.5);opacity:0}100%{transform:scale(1);opacity:1}}
+  .pend .ph{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.86rem}
+  .pend .ph .sdot{width:.55rem;height:.55rem;border-radius:50%;background:var(--pend);animation:blink 1s infinite;flex:0 0 auto}
+  .pend .ph b{color:var(--txt);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pend .ph .sns{color:var(--faint);font-size:.72rem;margin-left:auto;white-space:nowrap}
+  .pend .cond{margin-top:5px;font-family:var(--mono);font-size:.76rem;color:var(--dim)}
+  .pend .cond .cv{color:var(--bad);font-weight:700}
+  .pend .rsn{margin-top:4px;font-family:var(--mono);font-size:.76rem;line-height:1.5;color:var(--warn);
+    background:rgba(245,185,66,.06);border-radius:6px;padding:4px 7px;word-break:break-word}
+  .pend .req{margin-top:4px;font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+  .pend .req .rv{color:var(--accent)}
+  .pend .wait{margin-top:3px;font-size:.68rem;color:var(--faint);font-family:var(--mono)}
+
+  /* endpoint rows */
+  .ep{border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:7px 9px;flex:0 0 auto}
+  .ep.mismatch{border-color:rgba(255,107,107,.7);box-shadow:0 0 0 1px rgba(255,107,107,.25) inset}
+  .ep.healthy{border-color:rgba(61,220,151,.55)}
+  .ep .eh{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.84rem}
+  .ep .eh b{color:var(--txt);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ep .eh .phase{margin-left:auto;font-size:.72rem;white-space:nowrap}
+  .phase.Running{color:var(--ok)} .phase.Pending{color:var(--pend)} .phase.Terminating{color:var(--gray)}
+  .phase.Failed{color:var(--bad)} .phase.Succeeded{color:var(--accent2)}
+  .ep .cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:6px}
+  .cell{border:1px solid var(--line2);border-radius:7px;padding:3px 6px;min-width:0}
+  .cell .cl{font-size:.62rem;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .cell .cv{font-family:var(--mono);font-size:.84rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cv.t{color:var(--ok)} .cv.f{color:var(--bad)} .cv.n{color:var(--faint)}
+  .ep .ss{margin-top:5px;font-family:var(--mono);font-size:.76rem;line-height:1.5;border-radius:6px;padding:4px 7px;word-break:break-word}
+  .ss.loading{color:var(--warn);background:rgba(245,185,66,.07)}
+  .ss.serving{color:var(--ok);background:rgba(61,220,151,.06)}
+  .ss.stopped,.ss.unknown{color:var(--dim);background:rgba(132,148,179,.06)}
+  .ss .sk{color:var(--faint)}
+  .ep .verdict{margin-top:5px;font-size:.78rem;font-weight:650;line-height:1.45}
+  .verdict.bad{color:var(--bad)} .verdict.ok{color:var(--ok)} .verdict.dim{color:var(--dim)}
+
+  /* HPA KPIs */
+  .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .kpi{border:1px solid var(--line2);border-radius:8px;background:var(--panel2);padding:6px 9px;min-width:0}
+  .kpi .kl{font-size:.64rem;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .kpi .kv{font-family:var(--mono);font-size:1.45rem;font-weight:700;color:var(--accent);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kpi .kv.warn{color:var(--warn)} .kpi .kv.bad{color:var(--bad)} .kpi .kv.n{color:var(--faint)}
+  .kpi .ks{font-family:var(--mono);font-size:.68rem;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kpi.queue{border-color:rgba(123,108,246,.45)}
+  .kpi.queue .kv{color:#a89cf8}
+  #samples{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.74rem}
+  #samples th{font-size:.62rem;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);text-align:right;font-weight:700;padding:2px 4px}
+  #samples th:first-child,#samples td:first-child{text-align:left}
+  #samples td{color:var(--dim);text-align:right;padding:1px 4px;border-top:1px dashed var(--line2)}
+  .note{font-size:.76rem;color:var(--dim);line-height:1.5}
+
+  /* event log */
+  #events{flex:0 0 clamp(96px,8.5rem,150px);display:flex;flex-direction:column;min-height:0}
+  #evList{flex:1;overflow-y:auto;font-family:var(--mono);font-size:.8rem;line-height:1.7;scrollbar-width:thin}
+  .ev{display:flex;gap:8px;white-space:nowrap;overflow:hidden}
+  .ev .et{color:var(--faint);flex:0 0 3.2rem}
+  .ev .er{flex:0 0 11rem;overflow:hidden;text-overflow:ellipsis;color:var(--ok)}
+  .ev.warn .er{color:var(--warn)}
+  .ev .eo{flex:0 0 16rem;color:var(--dim);overflow:hidden;text-overflow:ellipsis}
+  .ev .em{flex:1;color:var(--txt);opacity:.85;overflow:hidden;text-overflow:ellipsis}
+  .ev.new{animation:evin .4s ease-out}
+  @keyframes evin{0%{background:rgba(76,201,240,.12)}100%{background:transparent}}
+
+  #truth{flex:0 0 auto;font-size:.72rem;color:var(--faint);line-height:1.4}
+
+  @media (max-width:1100px){
+    body{overflow:auto}
+    #m1Main{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none !important;transition:none !important}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <h1><span class="k8s">⎈</span> Cluster X-Ray <span class="lens" id="lensName">· Baseline Lens</span></h1>
+    <nav id="tabs">
+      <span class="tab active" data-lens="m1" title="Baseline lens: the three baseline failures from Module 1, on your own cluster">Baseline <small>M1</small></span>
+      <span class="tab stub" title="Lands with Module 4">Devices <small>M4</small></span>
+      <span class="tab stub" title="Lands with Module 5">Capacity <small>M5</small></span>
+      <span class="tab stub" title="Lands with Module 8">Serving <small>M8</small></span>
+      <span class="tab stub" title="Lands with Module 9">Data plane <small>M9</small></span>
+    </nav>
+    <div id="hdrRight">
+      <span id="verInfo">connecting…</span>
+      <span id="watchInd"><span class="wdot"></span><span id="watchTxt">watch: connecting</span></span>
+      <span id="brand">School of DevOps &amp; AI</span>
+    </div>
+  </header>
+
+  <div id="bar">
+    <span class="tag">Namespace</span>
+    <span id="nsName">m1-baseline</span>
+    <span id="barHint">Your real cluster, read through kubectl proxy: a Pod no node can place, a Service routing to a Pod that is not listening yet, and an autoscaler reading CPU while the queue grows.</span>
+  </div>
+
+  <div id="m1Main">
+    <div class="panel" id="pendPanel">
+      <h2>Pending Pods <span class="soft">· PodScheduled=False reason and message, cluster-wide</span></h2>
+      <div class="pbody" id="pendBody"><div class="msg info">Reading Pending Pods…</div></div>
+      <div class="pmeta" id="pendMeta"></div>
+    </div>
+    <div class="panel" id="epPanel">
+      <h2>Service endpoints <span class="soft">· EndpointSlice ready / serving / terminating against Pod phase and startup state</span></h2>
+      <div class="pbody" id="epBody"><div class="msg info">Reading Service sim…</div></div>
+      <div class="pmeta" id="epMeta"></div>
+    </div>
+    <div class="panel" id="hpaPanel">
+      <h2>HPA signal <span class="soft">· CPU the HPA reads, beside the queue it cannot see</span></h2>
+      <div class="pbody" id="hpaBody">
+        <div class="kpis">
+          <div class="kpi"><div class="kl">CPU utilisation (HPA)</div><div class="kv n" id="kCpu">—</div><div class="ks" id="kCpuS"></div></div>
+          <div class="kpi"><div class="kl">CPU target</div><div class="kv n" id="kTgt">—</div><div class="ks" id="kTgtS"></div></div>
+          <div class="kpi"><div class="kl">replicas current / desired</div><div class="kv n" id="kRep">—</div><div class="ks" id="kRepS"></div></div>
+          <div class="kpi queue"><div class="kl">queue depth (waiting)</div><div class="kv n" id="kQ">—</div><div class="ks" id="kQS"></div></div>
+        </div>
+        <div id="hpaMsgs"><div class="msg info">Reading HPA sim and the simulator's metrics…</div></div>
+        <table id="samples"><thead><tr><th>time</th><th>cpu</th><th>target</th><th>replicas</th><th>waiting</th><th>running</th></tr></thead><tbody id="sampleRows"></tbody></table>
+        <div class="note">The HPA scales on the CPU it reads from metrics-server. The queue depth is the
+          simulator's own <code>vllm:num_requests_waiting</code>, read through the API server's service proxy.
+          The HPA in this lab does not read it.</div>
+      </div>
+      <div class="pmeta" id="hpaMeta"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="events">
+    <h2>Events <span class="soft">· kubectl get events -w -n m1-baseline</span></h2>
+    <div id="evList"><div class="msg info" id="evEmpty">Waiting for events in m1-baseline…</div></div>
+  </div>
+
+  <div id="truth">Reads your real cluster with your own kubeconfig, GET requests only. The startup-state
+    column is the simulator wrapper's own instrumentation log line, a timed wait and not a model load.
+    The queue depth is the inference simulator's metric; no model server runs in this lab.</div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var $=function(id){return document.getElementById(id)};
+
+/* ------------------------------------------------------------------ the M1 objects
+   Fixed by planning/plans/m1-plan.md § Object names. The lens reads exactly these. */
+var NS='m1-baseline', SVC='sim', SIM_LABEL='sim', SIM_CONTAINER='sim', MODEL='m1-sim', HPA_NAME='sim';
+var PATH={
+  ns:'/api/v1/namespaces/'+NS,
+  pending:'/api/v1/pods?fieldSelector='+encodeURIComponent('status.phase=Pending')+'&limit=200',
+  pods:'/api/v1/namespaces/'+NS+'/pods',
+  slices:'/apis/discovery.k8s.io/v1/namespaces/'+NS+'/endpointslices',
+  slicesQuery:'labelSelector='+encodeURIComponent('kubernetes.io/service-name='+SVC),
+  events:'/api/v1/namespaces/'+NS+'/events',
+  log:function(pod){return '/api/v1/namespaces/'+NS+'/pods/'+encodeURIComponent(pod)+'/log?container='+SIM_CONTAINER+'&limitBytes=8192'},
+  hpa:'/apis/autoscaling/v2/namespaces/'+NS+'/horizontalpodautoscalers/'+HPA_NAME,
+  apiservice:'/apis/apiregistration.k8s.io/v1/apiservices/v1beta1.metrics.k8s.io',
+  queue:'/api/v1/namespaces/'+NS+'/services/'+SVC+':8000/proxy/metrics'
+};
+/* The lab step that creates each object, named in every degrade message. */
+var STEP={
+  ns:'step <b>Create and verify the base cluster</b>: <code>kubectl --context kind-grid-core apply -f m1/namespace.yaml</code>',
+  device:'step <b>Symptom one: a device request no node can satisfy</b>: <code>kubectl --context kind-grid-core apply -f m1/device-request.yaml</code>',
+  sim:'step <b>Symptom two: a slow-starting server behind a Service with no readiness gate</b>: <code>kubectl --context kind-grid-core apply -f m1/simulator.yaml -f m1/client.yaml</code>',
+  metrics:'step <b>Symptom three: an autoscaler watching CPU while the queue grows</b>: <code>kubectl --context kind-grid-core apply -f m1/metrics-server.yaml</code>',
+  hpa:'step <b>Symptom three: an autoscaler watching CPU while the queue grows</b>: <code>kubectl --context kind-grid-core apply -f m1/hpa.yaml</code>',
+  serve:'Restart it in a second terminal: <code>bash tools/xray/serve.sh</code>'
+};
+
+/* ------------------------------------------------------------------ state */
+var S={
+  streams:{},             // key -> 'sync'|'connected'|'resync'
+  watchErr:{},            // key -> last error text, for the panel messages
+  listed:{},              // key -> true once the first LIST succeeded
+  pods:{},                // m1-baseline pods by name, from the pods watch
+  slices:{},              // EndpointSlices for Service sim, by name, from the slices watch
+  nsState:'unknown',      // 'present' | 'missing' | 'error' | 'unknown'
+  nsErr:'',
+  apiDown:false
+};
+var PEND={polls:0,items:null,err:null};
+var EP={polls:0,state:{}};     // pod name -> {text, cls, err}
+var HPA={polls:0,hpa:null,hpaErr:null,apisvc:null,apisvcErr:null,queue:null,running:null,queueErr:null,samples:[]};
+
+/* ------------------------------------------------------------------ watch machinery
+   Ported from 304's X-Ray. LIST to get a resourceVersion, then WATCH from that version; reconnect
+   on stream end; on 410 Gone, re-LIST. */
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+/* Interval pollers must never overlap: a slow poll would otherwise stack fetches and eat the
+   HTTP/1.1 connection pool. */
+function oneAtATime(fn){
+  var busy=false;
+  return function(){
+    if(busy)return;
+    busy=true;
+    Promise.resolve().then(fn).catch(function(){}).then(function(){busy=false});
+  };
+}
+function setStream(key,st){S.streams[key]=st;renderWatchInd()}
+function delStream(key){delete S.streams[key];renderWatchInd()}
+
+/* Long-lived streams go over WebSocket. kubectl proxy is plain HTTP/1.1, and browsers allow only
+   6 HTTP/1.1 connections per host ACROSS ALL TABS. Streams held over fetch() pin those slots. The
+   API server accepts watch=1 as a WebSocket upgrade, kubectl proxy forwards upgrades, and
+   WebSockets do not count against the HTTP pool. If the upgrade fails, fall back to fetch()
+   streaming for the rest of the session. */
+var STREAM={ws:typeof WebSocket!=='undefined'};
+function streamLines(path,onOpen,onLine,ctl){ // resolves when the stream ends
+  return STREAM.ws?wsLines(path,onOpen,onLine,ctl).catch(function(e){
+    if(!e||!e.wsUnavailable)throw e;
+    STREAM.ws=false;                              /* sticky fallback */
+    return httpLines(path,onOpen,onLine,ctl);
+  }):httpLines(path,onOpen,onLine,ctl);
+}
+function wsLines(path,onOpen,onLine,ctl){
+  return new Promise(function(resolve,reject){
+    var ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+path);
+    var opened=false,dec=new TextDecoder(),buf='',done=false;
+    ws.binaryType='arraybuffer';
+    function finish(err){
+      if(done)return;done=true;ctl.closeStream=null;
+      try{ws.close()}catch(e){}
+      err?reject(err):resolve();
+    }
+    ctl.closeStream=function(){finish()};
+    ws.onopen=function(){opened=true;onOpen(200)};
+    ws.onmessage=function(m){
+      buf+=(typeof m.data==='string'?m.data:dec.decode(m.data,{stream:true}))+'\n';
+      var nl;
+      try{
+        while((nl=buf.indexOf('\n'))>=0){
+          var line=buf.slice(0,nl);buf=buf.slice(nl+1);
+          if(line.trim())onLine(line);
+        }
+      }catch(e){finish(e)}
+    };
+    ws.onerror=function(){if(!opened)finish({wsUnavailable:true})};
+    ws.onclose=function(){opened?finish():finish({wsUnavailable:true})};
+  });
+}
+async function httpLines(path,onOpen,onLine,ctl){
+  ctl.ac=new AbortController();
+  var r=await fetch(path,{signal:ctl.ac.signal});
+  onOpen(r.status);
+  if(!r.ok)return;
+  var reader=r.body.getReader(),dec=new TextDecoder(),buf='';
+  for(;;){
+    var chunk=await reader.read();
+    if(chunk.done)return;
+    buf+=dec.decode(chunk.value,{stream:true});
+    var nl;
+    while((nl=buf.indexOf('\n'))>=0){
+      var line=buf.slice(0,nl);buf=buf.slice(nl+1);
+      if(line.trim())onLine(line);
+    }
+  }
+}
+
+function startWatch(cfg){ // {key,path,query,onList,onEvent}
+  var ctl={stopped:false,ac:null,closeStream:null};
+  var q=cfg.query?cfg.query+'&':'';
+  ctl.stop=function(){
+    ctl.stopped=true;
+    if(ctl.ac)ctl.ac.abort();
+    if(ctl.closeStream)ctl.closeStream();
+    delStream(cfg.key);
+  };
+  (async function run(){
+    var rv=null;
+    while(!ctl.stopped){
+      try{
+        ctl.ac=new AbortController();
+        if(rv===null){
+          setStream(cfg.key,'sync');
+          var lr=await fetch(cfg.path+'?'+q+'limit=500',{signal:ctl.ac.signal});
+          if(!lr.ok)throw new Error('list HTTP '+lr.status);
+          var body=await lr.json();
+          rv=body.metadata.resourceVersion;
+          S.listed[cfg.key]=true;
+          delete S.watchErr[cfg.key];
+          cfg.onList(body.items||[]);
+        }
+        var status=0,t0=Date.now();
+        await streamLines(cfg.path+'?'+q+'watch=1&allowWatchBookmarks=true&resourceVersion='+rv,
+          function(st){
+            status=st;
+            if(st===410){rv=null;return}
+            if(st>=200&&st<300)setStream(cfg.key,'connected');
+          },
+          function(line){
+            var ev=JSON.parse(line);
+            if(ev.type==='BOOKMARK'){rv=ev.object.metadata.resourceVersion;return}
+            if(ev.type==='ERROR'){
+              if(ev.object&&ev.object.code===410)rv=null; // 410 Gone → full re-list
+              throw new Error('watch ERROR event');
+            }
+            rv=ev.object.metadata.resourceVersion;
+            cfg.onEvent(ev.type,ev.object);
+          },ctl);
+        if(status===410)continue;
+        if(status&&(status<200||status>=300))throw new Error('watch HTTP '+status);
+        /* stream ended (server timeout) → loop reconnects from last rv;
+           a stream that dies at once is a failure, not a timeout */
+        if(Date.now()-t0<1000)throw new Error('watch closed immediately');
+      }catch(e){
+        if(ctl.stopped)return;
+        S.watchErr[cfg.key]=(e&&e.message)||'stream failed';
+        setStream(cfg.key,'resync');
+        renderEndpoints();
+        await sleep(1200);
+      }
+    }
+  })();
+  return ctl;
+}
+
+function renderWatchInd(){
+  var vals=Object.keys(S.streams).map(function(k){return S.streams[k]});
+  var ind=$('watchInd'),txt=$('watchTxt'),st;
+  if(!vals.length||vals.indexOf('resync')>-1||vals.indexOf('sync')>-1)st='resync';
+  else st='connected';
+  ind.className=st;
+  txt.textContent=st==='connected'?'watch: connected':'watch: re-syncing';
+}
+
+/* ------------------------------------------------------------------ helpers */
+function esc(s){var d=document.createElement('span');d.textContent=s==null?'':String(s);return d.innerHTML}
+function age(t){
+  var s=Math.max(0,Math.round((Date.now()-t)/1000));
+  if(s<60)return s+'s';
+  var m=Math.floor(s/60);if(m<60)return m+'m'+(s%60?(s%60)+'s':'');
+  var h=Math.floor(m/60);return h+'h'+(m%60?(m%60)+'m':'');
+}
+function hhmmss(d){return d.toTimeString().slice(0,8)}
+function httpErr(status){var e=new Error('HTTP '+status);e.status=status;return e}
+function getJson(path){
+  return fetch(path).then(function(r){
+    if(!r.ok)throw httpErr(r.status);
+    return r.json();
+  });
+}
+function getText(path){
+  return fetch(path).then(function(r){
+    return r.text().then(function(t){
+      if(!r.ok){var e=httpErr(r.status);e.body=t;throw e}
+      return t;
+    });
+  });
+}
+/* A fetch that never reached the API (TypeError) means the proxy itself is gone. */
+function unreachable(e){return e&&!e.status}
+function apiDownMsg(){return '<div class="msg bad">The API is unreachable: <b>serve.sh has stopped</b>, so kubectl proxy is not answering. '+STEP.serve+'</div>'}
+function msg(cls,html){return '<div class="msg '+cls+'">'+html+'</div>'}
+
+/* ------------------------------------------------------------------ version + namespace */
+fetch('/version').then(function(r){return r.json()}).then(function(v){
+  $('verInfo').textContent='api-server '+v.gitVersion+' · '+v.platform;
+}).catch(function(){
+  $('verInfo').textContent='API unreachable: is serve.sh running?';
+});
+
+/* The namespace is POLLED, not watched: the long-lived budget is spent on the three watches below,
+   and existence changes once per lab. */
+var pollNs=oneAtATime(function(){
+  return fetch(PATH.ns).then(function(r){
+    S.apiDown=false;
+    if(r.ok){S.nsState='present';S.nsErr=''}
+    else if(r.status===404){S.nsState='missing';S.nsErr=''}
+    else{S.nsState='error';S.nsErr='HTTP '+r.status}
+  }).catch(function(){S.apiDown=true;S.nsState='error';S.nsErr='unreachable'})
+    .then(function(){renderEndpoints();renderHpa()});
+});
+
+/* ------------------------------------------------------------------ panel 1: Pending Pods
+   A cluster-wide status.phase=Pending field-selector POLL, as in 304's scheduling lens. Each Pod's
+   reason is read straight from its PodScheduled condition. */
+function podScheduledCond(p){
+  var conds=(p.status&&p.status.conditions)||[];
+  for(var i=0;i<conds.length;i++)if(conds[i].type==='PodScheduled')return conds[i];
+  return null;
+}
+var BASE_RESOURCES={cpu:1,memory:1,'ephemeral-storage':1};
+function requestedExtended(p){
+  var out=[],seen={};
+  ((p.spec&&p.spec.containers)||[]).forEach(function(c){
+    var r=c.resources||{};
+    ['limits','requests'].forEach(function(kind){
+      var m=r[kind]||{};
+      Object.keys(m).forEach(function(k){
+        if(BASE_RESOURCES[k]||k.indexOf('hugepages-')===0)return;
+        var key=c.name+'|'+k;if(seen[key])return;seen[key]=1;
+        out.push({container:c.name,kind:kind,name:k,value:m[k]});
+      });
+    });
+  });
+  return out;
+}
+var pollPending=oneAtATime(function(){
+  return getJson(PATH.pending).then(function(b){
+    PEND.items=b.items||[];PEND.err=null;S.apiDown=false;
+  }).catch(function(e){
+    PEND.err=e;if(unreachable(e))S.apiDown=true;
+  }).then(function(){PEND.polls++;renderPending()});
+});
+function renderPending(){
+  var host=$('pendBody');
+  $('pendMeta').textContent='poll #'+PEND.polls+' · GET /api/v1/pods?fieldSelector=status.phase=Pending';
+  if(PEND.err){
+    if(unreachable(PEND.err)){host.innerHTML=apiDownMsg();return}
+    host.innerHTML=msg('bad','Cannot list Pods: the API server answered <b>'+esc(PEND.err.message)+'</b>. '+
+      'serve.sh must run against context <code>kind-grid-core</code> with a kubeconfig that can read Pods. '+
+      'Check <code>KUBECONFIG</code> in the terminal running serve.sh, then '+STEP.serve.charAt(0).toLowerCase()+STEP.serve.slice(1));
+    return;
+  }
+  var real=(PEND.items||[]).filter(function(p){
+    return !p.metadata.deletionTimestamp&&!(p.spec&&p.spec.nodeName);
+  });
+  if(!real.length){
+    host.innerHTML=msg('info','<b>No Pending Pods in the cluster.</b> The scheduler has placed everything it was given. '+
+      'The lab creates one in '+STEP.device+'.');
+    return;
+  }
+  real.sort(function(a,b){return (a.metadata.namespace+'/'+a.metadata.name)<(b.metadata.namespace+'/'+b.metadata.name)?-1:1});
+  var seen={};
+  if(!host.querySelector('.pend'))host.innerHTML='';
+  real.forEach(function(p){
+    var key=p.metadata.namespace+'/'+p.metadata.name;
+    var id='pend-'+key.replace(/[^a-zA-Z0-9-]/g,'_');seen[id]=1;
+    var el=document.getElementById(id);
+    if(!el){
+      el=document.createElement('div');el.className='pend';el.id=id;
+      el.innerHTML='<div class="ph"><span class="sdot"></span><b></b><span class="sns"></span></div>'+
+        '<div class="cond"></div><div class="rsn"></div><div class="req"></div><div class="wait"></div>';
+      host.appendChild(el);
+    }
+    el.querySelector('b').textContent=p.metadata.name;
+    el.querySelector('b').title=p.metadata.name;
+    el.querySelector('.sns').textContent='ns: '+p.metadata.namespace;
+    var c=podScheduledCond(p);
+    var cond=el.querySelector('.cond'),rsn=el.querySelector('.rsn');
+    if(c){
+      cond.innerHTML='PodScheduled=<span class="cv">'+esc(c.status)+'</span> · reason <span class="cv">'+esc(c.reason||'(none)')+'</span>';
+      rsn.textContent=c.message||'(no message: the scheduler has not reported yet)';
+    }else{
+      cond.innerHTML='PodScheduled=<span class="cv">(not set)</span>';
+      rsn.textContent='Waiting on the scheduler: no PodScheduled condition yet.';
+    }
+    var ext=requestedExtended(p);
+    el.querySelector('.req').innerHTML=ext.length?('asks for '+ext.map(function(x){
+      return '<span class="rv">'+esc(x.name)+': '+esc(x.value)+'</span> ('+esc(x.kind)+', container '+esc(x.container)+')';
+    }).join(', ')):'asks for no extended resource';
+    var t=Date.parse(p.metadata.creationTimestamp||0);
+    el.querySelector('.wait').textContent=t?('pending for '+age(t)):'';
+  });
+  Array.prototype.slice.call(host.querySelectorAll('.pend')).forEach(function(el){
+    if(!seen[el.id])host.removeChild(el);
+  });
+}
+
+/* ------------------------------------------------------------------ panel 2: Service endpoints
+   Two watches (the m1-baseline Pods and Service sim's EndpointSlices) plus a log POLL per sim Pod.
+   The startup state is the last line beginning `startup-state=` in the sim container's log. The
+   log is read from its START with limitBytes, not from its tail: once the simulator is serving it
+   keeps writing, and a tail read would lose the startup lines. 8 KiB holds the whole startup
+   window at the lab's 60 s with room to spare. */
+function isSimPod(p){return ((p.metadata&&p.metadata.labels)||{}).app===SIM_LABEL}
+function podPhase(p){
+  if(p.metadata.deletionTimestamp)return 'Terminating';
+  return (p.status&&p.status.phase)||'Unknown';
+}
+function simContainer(p){
+  var cs=(p.status&&p.status.containerStatuses)||[];
+  for(var i=0;i<cs.length;i++)if(cs[i].name===SIM_CONTAINER)return cs[i];
+  return null;
+}
+function endpointFor(podName){
+  var names=Object.keys(S.slices);
+  for(var i=0;i<names.length;i++){
+    var eps=S.slices[names[i]].endpoints||[];
+    for(var j=0;j<eps.length;j++){
+      var tr=eps[j].targetRef;
+      if(tr&&tr.kind==='Pod'&&tr.name===podName)return {slice:names[i],ep:eps[j]};
+    }
+  }
+  return null;
+}
+function parseStartupState(text){
+  var lines=String(text||'').split('\n'),last=null;
+  for(var i=0;i<lines.length;i++){
+    var l=lines[i].trim();
+    if(l.indexOf('startup-state=')===0)last=l.slice('startup-state='.length);
+  }
+  if(last===null)return null;
+  var cls=/^loading/.test(last)?'loading':/^serving/.test(last)?'serving':/^stopped/.test(last)?'stopped':'unknown';
+  return {text:last,cls:cls};
+}
+var pollLogs=oneAtATime(async function(){
+  var names=Object.keys(S.pods).filter(function(n){return isSimPod(S.pods[n])});
+  for(var i=0;i<names.length;i++){
+    var p=S.pods[names[i]];if(!p)continue;
+    var cs=simContainer(p);
+    var started=cs&&cs.state&&(cs.state.running||cs.state.terminated);
+    if(!started){EP.state[names[i]]={none:'container not started yet: no log to read'};continue}
+    try{
+      var t=await getText(PATH.log(names[i]));
+      var st=parseStartupState(t);
+      EP.state[names[i]]=st||{none:'no startup-state= line in the first 8 KiB of the log'};
+    }catch(e){
+      EP.state[names[i]]={none:unreachable(e)?'log unreachable':'log read failed: '+e.message};
+    }
+  }
+  Object.keys(EP.state).forEach(function(n){if(!S.pods[n])delete EP.state[n]});
+  EP.polls++;
+  renderEndpoints();
+});
+function cellBool(label,v){
+  var cls=v===true?'t':v===false?'f':'n';
+  var txt=v===true?'true':v===false?'false':'—';
+  return '<div class="cell"><div class="cl">'+label+'</div><div class="cv '+cls+'">'+txt+'</div></div>';
+}
+function renderEndpoints(){
+  var host=$('epBody');
+  var errs=['pods','slices'].filter(function(k){return S.watchErr[k]}).map(function(k){return k+' watch: '+S.watchErr[k]});
+  $('epMeta').textContent='watches: pods + endpointslices (kubernetes.io/service-name='+SVC+') · log poll #'+EP.polls+
+    (errs.length?' · '+errs.join(' · '):'');
+  if(S.apiDown){host.innerHTML=apiDownMsg();return}
+  if(S.nsState==='missing'){
+    host.innerHTML=msg('','Namespace <b>'+NS+'</b> does not exist yet, so there is no Service to read. Create it in '+STEP.ns+'.');
+    return;
+  }
+  if(!S.listed.pods||!S.listed.slices){
+    if(errs.length){
+      host.innerHTML=msg('bad','Cannot read the Service\'s objects: '+esc(errs.join('; '))+'. '+
+        'serve.sh must run against context <code>kind-grid-core</code> with a kubeconfig that can list Pods and EndpointSlices.');
+    }else host.innerHTML=msg('info','Reading Service sim…');
+    return;
+  }
+  var simPods=Object.keys(S.pods).filter(function(n){return isSimPod(S.pods[n])});
+  var sliceNames=Object.keys(S.slices);
+  var orphanEps=[];
+  sliceNames.forEach(function(sn){(S.slices[sn].endpoints||[]).forEach(function(ep){
+    var tr=ep.targetRef;if(tr&&tr.kind==='Pod'&&simPods.indexOf(tr.name)<0)orphanEps.push(tr.name);
+  })});
+  if(!simPods.length&&!orphanEps.length){
+    host.innerHTML=msg('','<b>No Pod labelled app='+SIM_LABEL+' and no endpoint for Service '+SVC+' yet.</b> '+
+      'The lab creates both in '+STEP.sim+'.');
+    return;
+  }
+  var html='';
+  if(!sliceNames.length){
+    html+=msg('','Service <b>'+SVC+'</b> has <b>no EndpointSlice</b> yet, so nothing is routed to these Pods. '+
+      'If the Service is missing, it is created in '+STEP.sim+'.');
+  }
+  simPods.sort().forEach(function(name){
+    var p=S.pods[name],cs=simContainer(p),hit=endpointFor(name);
+    var cond=hit?(hit.ep.conditions||{}):null;
+    var ready=cond?cond.ready:undefined,serving=cond?cond.serving:undefined,term=cond?cond.terminating:undefined;
+    var st=EP.state[name];
+    var phase=podPhase(p);
+    var verdict,vcls,rowCls='';
+    if(hit&&ready===true&&st&&st.cls==='loading'){
+      verdict='Routed but not listening: the EndpointSlice marks this Pod ready, so the Service sends it traffic, while its startup state is still loading and port 8000 is not open.';
+      vcls='bad';rowCls=' mismatch';
+    }else if(hit&&ready===true&&st&&st.cls==='serving'){
+      verdict='Routed and listening: the endpoint is ready and the simulator has started.';vcls='ok';rowCls=' healthy';
+    }else if(!hit){
+      verdict='Not in any EndpointSlice for Service '+SVC+': the Service does not route here.';vcls='dim';
+    }else if(ready!==true){
+      verdict='In the EndpointSlice but not ready: the Service does not route here.';vcls='dim';
+    }else{
+      verdict='Routed; startup state not read yet.';vcls='dim';
+    }
+    var restarts=cs?cs.restartCount:0;
+    html+='<div class="ep'+rowCls+'" id="ep-'+esc(name)+'">'+
+      '<div class="eh"><b title="'+esc(name)+'">'+esc(name)+'</b><span class="phase '+esc(phase)+'">phase '+esc(phase)+
+        (restarts?' · restarts '+esc(restarts):'')+'</span></div>'+
+      '<div class="cells">'+
+        cellBool('container ready',cs?cs.ready:undefined)+
+        cellBool('endpoint ready',ready)+
+        cellBool('serving',serving)+
+        cellBool('terminating',term)+
+      '</div>'+
+      (st&&st.text!=null
+        ?'<div class="ss '+st.cls+'"><span class="sk">startup-state=</span>'+esc(st.text)+'</div>'
+        :'<div class="ss unknown"><span class="sk">startup-state · </span>'+esc(st?st.none:'reading the log…')+'</div>')+
+      '<div class="verdict '+vcls+'">'+esc(verdict)+'</div>'+
+    '</div>';
+  });
+  orphanEps.forEach(function(n){
+    html+=msg('info','EndpointSlice lists Pod <b>'+esc(n)+'</b>, which is no longer on the Pods watch (it is going away).');
+  });
+  host.innerHTML=html;
+}
+
+/* ------------------------------------------------------------------ panel 3: HPA signal
+   Three GETs per tick, in sequence so they hold one connection between them: the HPA object,
+   the metrics APIService, and the simulator's /metrics through the API server's service proxy. */
+function cpuTarget(h){
+  var ms=(h.spec&&h.spec.metrics)||[];
+  for(var i=0;i<ms.length;i++){
+    var m=ms[i];
+    if(m.type==='Resource'&&m.resource&&m.resource.name==='cpu')return m.resource.target||{};
+  }
+  return null;
+}
+function cpuCurrent(h){
+  var ms=(h.status&&h.status.currentMetrics)||[];
+  for(var i=0;i<ms.length;i++){
+    var m=ms[i];
+    if(m.type==='Resource'&&m.resource&&m.resource.name==='cpu')return m.resource.current||{};
+  }
+  return null;
+}
+function hpaCond(h,type){
+  var cs=(h.status&&h.status.conditions)||[];
+  for(var i=0;i<cs.length;i++)if(cs[i].type===type)return cs[i];
+  return null;
+}
+function metricFor(text,name){
+  var re=new RegExp('^'+name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\{([^}]*)\\} ([0-9.eE+-]+)$','gm'),m;
+  while((m=re.exec(text))){
+    if(m[1].indexOf('model_name="'+MODEL+'"')>=0)return parseFloat(m[2]);
+  }
+  return null;
+}
+var pollHpa=oneAtATime(async function(){
+  try{HPA.hpa=await getJson(PATH.hpa);HPA.hpaErr=null;S.apiDown=false}
+  catch(e){HPA.hpa=null;HPA.hpaErr=e;if(unreachable(e))S.apiDown=true}
+  try{HPA.apisvc=await getJson(PATH.apiservice);HPA.apisvcErr=null}
+  catch(e){HPA.apisvc=null;HPA.apisvcErr=e}
+  try{
+    var t=await getText(PATH.queue);
+    HPA.queue=metricFor(t,'vllm:num_requests_waiting');
+    HPA.running=metricFor(t,'vllm:num_requests_running');
+    HPA.queueErr=HPA.queue===null?{missing:true}:null;
+  }catch(e){HPA.queue=null;HPA.running=null;HPA.queueErr=e}
+  HPA.polls++;
+  sample();
+  renderHpa();
+});
+function sample(){
+  var h=HPA.hpa,cur=h&&cpuCurrent(h),tgt=h&&cpuTarget(h);
+  HPA.samples.unshift({
+    t:hhmmss(new Date()),
+    cpu:cur&&cur.averageUtilization!=null?cur.averageUtilization+'%':'—',
+    tgt:tgt&&tgt.averageUtilization!=null?tgt.averageUtilization+'%':'—',
+    rep:h&&h.status?(h.status.currentReplicas!=null?h.status.currentReplicas:'—')+'/'+(h.status.desiredReplicas!=null?h.status.desiredReplicas:'—'):'—',
+    q:HPA.queue==null?'—':String(HPA.queue),
+    r:HPA.running==null?'—':String(HPA.running)
+  });
+  if(HPA.samples.length>8)HPA.samples.length=8;
+}
+function setKpi(id,val,cls,sub){
+  var el=$(id);el.textContent=val;el.className='kv'+(cls?' '+cls:'');
+  $(id+'S').textContent=sub||'';
+}
+function renderHpa(){
+  var msgs=[],h=HPA.hpa;
+  $('hpaMeta').textContent='poll #'+HPA.polls+' · GET HPA '+HPA_NAME+' · APIService v1beta1.metrics.k8s.io · service proxy '+SVC+':8000/metrics';
+  if(S.apiDown){$('hpaMsgs').innerHTML=apiDownMsg();clearKpis();return}
+  if(S.nsState==='missing'){
+    $('hpaMsgs').innerHTML=msg('','Namespace <b>'+NS+'</b> does not exist yet, so there is no HPA or simulator to read. Create it in '+STEP.ns+'.');
+    clearKpis();return;
+  }
+  /* metrics-server */
+  if(HPA.apisvcErr&&HPA.apisvcErr.status===404){
+    msgs.push(msg('','<b>metrics-server is not installed</b>: APIService v1beta1.metrics.k8s.io does not exist, so the HPA has no CPU to read. Install it in '+STEP.metrics+'.'));
+  }else if(HPA.apisvcErr){
+    msgs.push(msg('bad','Cannot read APIService v1beta1.metrics.k8s.io: '+esc(HPA.apisvcErr.message)+'.'));
+  }else if(HPA.apisvc){
+    var ac=null,cs=(HPA.apisvc.status&&HPA.apisvc.status.conditions)||[];
+    for(var i=0;i<cs.length;i++)if(cs[i].type==='Available')ac=cs[i];
+    if(!ac||ac.status!=='True'){
+      msgs.push(msg('','<b>metrics-server is installed but not Available</b>'+(ac?': '+esc(ac.reason||'')+(ac.message?' · '+esc(ac.message):''):'')+
+        '. The HPA reads CPU only once APIService v1beta1.metrics.k8s.io reports Available=True. Wait for it, as the lab does after '+STEP.metrics+'.'));
+    }
+  }
+  /* the HPA */
+  if(HPA.hpaErr&&HPA.hpaErr.status===404){
+    msgs.unshift(msg('','<b>No HPA named '+HPA_NAME+' in '+NS+' yet.</b> Create it in '+STEP.hpa+'.'));
+    setKpi('kCpu','—','n','no HPA');setKpi('kTgt','—','n','');setKpi('kRep','—','n','');
+  }else if(HPA.hpaErr){
+    msgs.unshift(msg('bad','Cannot read HPA '+HPA_NAME+': '+esc(HPA.hpaErr.message)+'.'));
+    setKpi('kCpu','—','n','');setKpi('kTgt','—','n','');setKpi('kRep','—','n','');
+  }else if(h){
+    var tgt=cpuTarget(h),cur=cpuCurrent(h);
+    if(tgt&&tgt.averageUtilization!=null)setKpi('kTgt',tgt.averageUtilization+'%','','averageUtilization · '+(h.spec.scaleTargetRef?h.spec.scaleTargetRef.kind+'/'+h.spec.scaleTargetRef.name:''));
+    else setKpi('kTgt','—','n','no cpu Resource metric in spec.metrics');
+    if(cur&&cur.averageUtilization!=null){
+      setKpi('kCpu',cur.averageUtilization+'%','',cur.averageValue?'averageValue '+cur.averageValue:'status.currentMetrics');
+    }else{
+      var sa=hpaCond(h,'ScalingActive');
+      setKpi('kCpu','<unknown>','warn',sa&&sa.status==='False'?(sa.reason||''):'no current CPU reading');
+      msgs.push(msg('','<b>The HPA has no CPU reading</b>'+(sa&&sa.status==='False'?': '+esc(sa.reason||'')+(sa.message?' · '+esc(sa.message):''):'')+
+        '. It reads CPU from metrics-server, installed in '+STEP.metrics+'.'));
+    }
+    var st=h.status||{};
+    setKpi('kRep',(st.currentReplicas!=null?st.currentReplicas:'—')+' / '+(st.desiredReplicas!=null?st.desiredReplicas:'—'),'',
+      'min '+(h.spec.minReplicas!=null?h.spec.minReplicas:1)+' · max '+h.spec.maxReplicas);
+  }
+  /* queue depth */
+  if(HPA.queueErr&&HPA.queueErr.missing){
+    setKpi('kQ','—','n','no matching metric line');
+    msgs.push(msg('','The simulator\'s /metrics answered, but it carries no <code>vllm:num_requests_waiting{model_name="'+MODEL+'"}</code> line. The lab\'s simulator serves model <code>'+MODEL+'</code>, applied in '+STEP.sim+'.'));
+  }else if(HPA.queueErr&&HPA.queueErr.status===404){
+    setKpi('kQ','—','n','Service not found');
+    msgs.push(msg('','<b>Service '+SVC+' does not exist yet</b>, so there is no queue to read. The lab creates it in '+STEP.sim+'.'));
+  }else if(HPA.queueErr&&HPA.queueErr.status===503){
+    setKpi('kQ','—','bad','proxy HTTP 503');
+    msgs.push(msg('bad','<b>Queue depth unreadable: the service proxy answered HTTP 503.</b> No Pod behind Service '+SVC+' is accepting connections on port 8000 yet. '+
+      'If a Pod reads startup-state=loading in the endpoints panel, this is symptom two, live.'));
+  }else if(HPA.queueErr){
+    setKpi('kQ','—','n',esc(HPA.queueErr.message||'unreadable'));
+    msgs.push(msg('bad','Queue depth unreadable through the service proxy: '+esc(HPA.queueErr.message||'request failed')+'.'));
+  }else{
+    setKpi('kQ',String(HPA.queue),HPA.queue>0?'warn':'',
+      'vllm:num_requests_waiting'+(HPA.running!=null?' · running '+HPA.running:''));
+  }
+  $('hpaMsgs').innerHTML=msgs.join('');
+  $('sampleRows').innerHTML=HPA.samples.map(function(s){
+    return '<tr><td>'+s.t+'</td><td>'+esc(s.cpu)+'</td><td>'+esc(s.tgt)+'</td><td>'+esc(s.rep)+'</td><td>'+esc(s.q)+'</td><td>'+esc(s.r)+'</td></tr>';
+  }).join('');
+}
+function clearKpis(){['kCpu','kTgt','kRep','kQ'].forEach(function(k){setKpi(k,'—','n','')})}
+
+/* ------------------------------------------------------------------ events */
+function evTime(e){return Date.parse(e.lastTimestamp||e.eventTime||e.firstTimestamp||(e.metadata&&e.metadata.creationTimestamp)||0)||0}
+function appendEvent(e,live){
+  var list=$('evList');
+  var empty=$('evEmpty');if(empty)list.innerHTML='';
+  var row=document.createElement('div');
+  row.className='ev'+(e.type==='Warning'?' warn':'')+(live?' new':'');
+  var io=e.involvedObject||e.regarding||{};
+  row.innerHTML='<span class="et">'+age(evTime(e)||Date.now())+'</span><span class="er">'+esc(e.reason||'')+
+    '</span><span class="eo">'+esc((io.kind||'')+'/'+(io.name||''))+'</span><span class="em">'+esc(e.message||e.note||'')+'</span>';
+  list.insertBefore(row,list.firstChild);
+  while(list.children.length>60)list.removeChild(list.lastChild);
+}
+
+/* ------------------------------------------------------------------ the long-lived budget
+   Browsers allow 6 HTTP/1.1 connections per host. This lens holds THREE long-lived watches, under
+   the course's cap of five, and polls everything else one request at a time. */
+var WATCH_KEYS=['pods','slices','events'];
+startWatch({
+  key:'pods',path:PATH.pods,
+  onList:function(items){S.pods={};items.forEach(function(p){S.pods[p.metadata.name]=p});renderEndpoints();pollLogs()},
+  onEvent:function(type,obj){
+    if(type==='DELETED')delete S.pods[obj.metadata.name];else S.pods[obj.metadata.name]=obj;
+    renderEndpoints();
+  }
+});
+startWatch({
+  key:'slices',path:PATH.slices,query:PATH.slicesQuery,
+  onList:function(items){S.slices={};items.forEach(function(s){S.slices[s.metadata.name]=s});renderEndpoints()},
+  onEvent:function(type,obj){
+    if(type==='DELETED')delete S.slices[obj.metadata.name];else S.slices[obj.metadata.name]=obj;
+    renderEndpoints();
+  }
+});
+startWatch({
+  key:'events',path:PATH.events,
+  onList:function(items){
+    items.sort(function(a,b){return evTime(a)-evTime(b)});
+    items.slice(-40).forEach(function(e){appendEvent(e,false)});
+  },
+  onEvent:function(type,obj){if(type!=='DELETED')appendEvent(obj,true)}
+});
+
+/* ------------------------------------------------------------------ boot */
+pollNs();setInterval(pollNs,5000);
+pollPending();setInterval(pollPending,2500);
+setInterval(pollLogs,3000);
+pollHpa();setInterval(pollHpa,3000);
+renderWatchInd();
+window.__xray={S:S,STREAM:STREAM,WATCH_KEYS:WATCH_KEYS,PEND:PEND,EP:EP,HPA:HPA,parseStartupState:parseStartupState};   /* test hook */
+})();
+</script>
+</body>
+</html>
