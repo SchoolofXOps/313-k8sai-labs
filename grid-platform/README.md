@@ -13,11 +13,12 @@ below). Continuity lives in this repository's history and in those tags, not in 
 running — an 8 GB laptop cannot keep the platform up between sessions, and platform teams do not
 work that way either.
 
-## What this directory contains today
+## What this directory contains on a fresh clone of `main`
 
-Thirteen files: this one, and one `README.md` per directory. Nothing else. Measured
-2026-10-07 — `git ls-files -- labs/grid-platform` reports 13 tracked files, zero lab artifacts.
-That is the whole point of the seed: every one of the twelve directories already has a documented
+Thirteen files: this one, and one `README.md` per directory. None of them is a lab's work. From
+your first lab onwards, each module adds its files here, and so does restoring a `grid-v*`
+reference point. So once you have started, this directory holds more than the thirteen. That is
+the whole point of the seed: every one of the twelve directories already has a documented
 address and a declared owning module, so a module author in a later phase writes into a
 pre-assigned path instead of inventing one on the day.
 
@@ -31,8 +32,8 @@ Lowercase, one leading `v`, no build suffix, no pre-release suffix.
 
 **Reference-tag owner:** Gourav Shah — School of DevOps & AI. Read from `course.config.json`'s
 `course.author` field and the design spec's course-identity table; no artifact in this repository named a
-tag owner before this seed, so the course author is named here and the assignment is flagged for
-founder sign-off in `02-11-SUMMARY.md` rather than left blank. A convention with no owner is a
+tag owner before this seed, so the course author is named here rather than the field being left
+blank. A convention with no owner is a
 convention nobody maintains.
 
 **The tags are cut on the PUBLIC labs repository, not here.** They live on
