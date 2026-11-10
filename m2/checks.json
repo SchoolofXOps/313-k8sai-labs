@@ -49,9 +49,9 @@
     },
     {
       "id": "cost-model-prints-assumptions",
-      "describe": "the cost calculator exits 0, prints the assumptions literal first, and labels prices replace with your own quote",
+      "describe": "the cost calculator exits 0 and prints the assumptions literal first (the quote label is the next check)",
       "weight": 1,
-      "run": "bash m2/cost-model.sh m2/inputs/cost.conf > /dev/null && echo \"first=$(bash m2/cost-model.sh m2/inputs/cost.conf | head -n 1)\" && bash m2/cost-model.sh m2/inputs/cost.conf | grep -c 'replace with your own quote' | sed 's/^/quote_lines=/'",
+      "run": "bash m2/cost-model.sh m2/inputs/cost.conf > /dev/null && echo \"first=$(bash m2/cost-model.sh m2/inputs/cost.conf | head -n 1)\"",
       "assert": {
         "matches": "^first=ASSUMPTIONS \\(an estimate from stated inputs, not a measurement\\):$"
       }
@@ -94,20 +94,20 @@
     },
     {
       "id": "calculators-bash-and-awk-only",
-      "describe": "with comment lines stripped, no calculator calls python, node, bc or jq, or sources a file under inputs",
+      "describe": "all seven calculator files were read, and with comment lines stripped none calls python, node, bc or jq, or sources a file under inputs",
       "weight": 2,
-      "run": "if cat m2/*.sh m2/lib/*.sh | grep -v '^[[:space:]]*#' | grep -Eq '(^|[^A-Za-z0-9_./-])(python3?|node|bc|jq)([^A-Za-z0-9_-]|$)|^[[:space:]]*(source|\\.)[[:space:]]+[^#]*inputs'; then echo \"tools=forbidden-found\"; else echo \"tools=bash-awk-only\"; fi",
+      "run": "n=0; for f in m2/*.sh m2/lib/*.sh; do [ -f \"$f\" ] && n=$((n+1)); done; if [ \"$n\" -lt 7 ]; then echo \"tools=no-files-read files=$n\"; elif cat m2/*.sh m2/lib/*.sh | grep -v '^[[:space:]]*#' | grep -Eq '(^|[^A-Za-z0-9_./-])(python3?|node|bc|jq)([^A-Za-z0-9_-]|$)|^[[:space:]]*(source|\\.)[[:space:]]+[^#]*inputs'; then echo \"tools=forbidden-found files=$n\"; else echo \"tools=bash-awk-only files=$n\"; fi",
       "assert": {
-        "matches": "^tools=bash-awk-only$"
+        "matches": "^tools=bash-awk-only files=7$"
       }
     },
     {
       "id": "calculators-touch-no-cluster",
-      "describe": "with comment lines stripped, no calculator calls kubectl, kind, docker or helm",
+      "describe": "all seven calculator files were read, and with comment lines stripped none calls kubectl, kind, docker or helm",
       "weight": 1,
-      "run": "if cat m2/*.sh m2/lib/*.sh | grep -v '^[[:space:]]*#' | grep -Eq '(^|[^A-Za-z0-9_./-])(kubectl|kind|docker|helm)([^A-Za-z0-9_-]|$)'; then echo \"cluster=touched\"; else echo \"cluster=untouched\"; fi",
+      "run": "n=0; for f in m2/*.sh m2/lib/*.sh; do [ -f \"$f\" ] && n=$((n+1)); done; if [ \"$n\" -lt 7 ]; then echo \"cluster=no-files-read files=$n\"; elif cat m2/*.sh m2/lib/*.sh | grep -v '^[[:space:]]*#' | grep -Eq '(^|[^A-Za-z0-9_./-])(kubectl|kind|docker|helm)([^A-Za-z0-9_-]|$)'; then echo \"cluster=touched files=$n\"; else echo \"cluster=untouched files=$n\"; fi",
       "assert": {
-        "matches": "^cluster=untouched$"
+        "matches": "^cluster=untouched files=7$"
       }
     },
     {
@@ -139,11 +139,11 @@
     },
     {
       "id": "cost-model-sections",
-      "describe": "grid-platform/docs/cost-model.md holds the two fixed headings and the four lever headings, in order",
+      "describe": "grid-platform/docs/cost-model.md holds the two fixed headings and the four lever headings, in order, and each holds its own calculator row: low and high under the fleet heading, then share, queue, pack and reclaim under theirs",
       "weight": 2,
-      "run": "awk '/^## Fleet cost at 5% and at 60% utilisation$/{a=NR} /^## The four levers$/{b=NR} /^### Share$/{c=NR} /^### Queue$/{d=NR} /^### Pack$/{e=NR} /^### Reclaim$/{f=NR} END{ if (a && b>a && c>b && d>c && e>d && f>e) print \"cost_sections=ordered\"; else print \"cost_sections=missing-or-out-of-order\" }' grid-platform/docs/cost-model.md",
+      "run": "awk '/^## Fleet cost at 5% and at 60% utilisation$/{a=NR; s=\"fleet\"; next} /^## The four levers$/{b=NR; s=\"levers\"; next} /^### Share$/{c=NR; s=\"share\"; next} /^### Queue$/{d=NR; s=\"queue\"; next} /^### Pack$/{e=NR; s=\"pack\"; next} /^### Reclaim$/{f=NR; s=\"reclaim\"; next} /^#/{s=\"\"; next} s==\"fleet\" && /^low +utilisation=/{r1=1} s==\"fleet\" && /^high +utilisation=/{r2=1} s==\"share\" && /^share +utilisation=/{r3=1} s==\"queue\" && /^queue +utilisation=/{r4=1} s==\"pack\" && /^pack +accelerators=/{r5=1} s==\"reclaim\" && /^reclaim +idle_hours_returned=/{r6=1} END{ if (a && b>a && c>b && d>c && e>d && f>e) printf \"cost_sections=ordered\"; else printf \"cost_sections=missing-or-out-of-order\"; print \" rows=\" (r1+r2+r3+r4+r5+r6) }' grid-platform/docs/cost-model.md",
       "assert": {
-        "matches": "^cost_sections=ordered$"
+        "matches": "^cost_sections=ordered rows=6$"
       }
     }
   ]

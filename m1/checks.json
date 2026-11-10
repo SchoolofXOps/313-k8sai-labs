@@ -94,11 +94,11 @@
     },
     {
       "id": "baseline-failures-three-sections",
-      "describe": "baseline-failures.md holds the three fixed headings in order",
+      "describe": "grid-platform/docs/baseline-failures.md holds the three fixed headings, in order, and each section holds its own evidence: the device-request Pod, the startup-state log, the num_requests_waiting metric",
       "weight": 2,
-      "run": "sh -c 'grep \"^## \" grid-platform/docs/baseline-failures.md | tr \"\\n\" \"|\"; echo'",
+      "run": "sh -c 'f=grid-platform/docs/baseline-failures.md; grep \"^## \" \"$f\" | tr \"\\n\" \"|\"; awk \"/^## /{s++; next} s==1 && /device-request/{a=1} s==2 && /startup-state=/{b=1} s==3 && /num_requests_waiting/{c=1} END{printf \\\" evidence=%d%d%d\\\", a, b, c}\" \"$f\"; echo'",
       "assert": {
-        "matches": "^## A device request no node can satisfy\\|## A slow-starting server behind a Service with no readiness gate\\|## An autoscaler watching CPU while the queue grows\\|$"
+        "matches": "^## A device request no node can satisfy\\|## A slow-starting server behind a Service with no readiness gate\\|## An autoscaler watching CPU while the queue grows\\| evidence=111$"
       }
     },
     {
@@ -112,9 +112,9 @@
     },
     {
       "id": "grid-core-profile-record",
-      "describe": "PROFILE.md records SIZE, a sha256 node-image digest and the verify.sh OK line",
+      "describe": "PROFILE.md records SIZE, a NODE_IMAGE= line pinned by sha256 digest, and the verify.sh OK line",
       "weight": 2,
-      "run": "sh -c 'f=grid-platform/clusters/grid-core/PROFILE.md; a=$(grep -cE \"^SIZE=[0-9]+$\" \"$f\"); b=$(grep -cE \"sha256:[0-9a-f]{64}\" \"$f\"); c=$(grep -c \"^OK: grid-core verified\" \"$f\"); echo \"size=$a digest=$b ok=$c\"'",
+      "run": "sh -c 'f=grid-platform/clusters/grid-core/PROFILE.md; a=$(grep -cE \"^SIZE=[0-9]+$\" \"$f\"); b=$(grep -cE \"^NODE_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$\" \"$f\"); c=$(grep -c \"^OK: grid-core verified\" \"$f\"); echo \"size=$a digest=$b ok=$c\"'",
       "assert": {
         "matches": "^size=[1-9][0-9]* digest=[1-9][0-9]* ok=[1-9][0-9]*$"
       }

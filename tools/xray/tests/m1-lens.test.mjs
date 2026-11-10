@@ -167,7 +167,7 @@ function notFound(kind, name) {
 /* ---------------------------------------------------------------- fake API server */
 let scenario = SCENARIOS.full;
 let allowWs = true;            // false = a proxy that refuses upgrades
-const stats = { live: 0, maxLive: 0, ws: 0, httpStreams: 0, nonGet: [], unknown: new Set(), logQueries: [], sliceQueries: [] };
+const stats = { total: 0, live: 0, maxLive: 0, ws: 0, httpStreams: 0, nonGet: [], unknown: new Set(), logQueries: [], sliceQueries: [] };
 const sockets = new Set();
 const KNOWN = new Set([
   '/xray/', '/xray/index.html', '/version', '/favicon.ico',
@@ -206,6 +206,7 @@ function listFor(p) {
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const p = u.pathname;
+  stats.total++;
   if (req.method !== 'GET') {
     stats.nonGet.push(`${req.method} ${p}`);
     return json(res, 405, { kind: 'Status', code: 405, message: 'fixture: the X-Ray lens must only GET' });
@@ -505,6 +506,9 @@ describe('Cluster X-Ray M1 Baseline lens, offline against a fake API server', { 
   });
 
   it('only ever GETs, and only the paths the lens declares', () => {
+    // The two lists below are filled by the earlier tests' traffic. Run alone (--test-name-pattern)
+    // they are empty and would pass having examined nothing, so require that traffic was seen.
+    assert.ok(stats.total > 0, 'no request reached the fixture API, so there is nothing to check — run the whole suite');
     assert.deepEqual(stats.nonGet, [], 'the lens must never write to the cluster');
     assert.deepEqual([...stats.unknown], [], `requests outside the lens's declared paths: ${[...stats.unknown].join(', ')}`);
   });

@@ -37,27 +37,31 @@ echo "  formula: weights = parameters * precision_bytes; kv per token = 2 * laye
 echo "  formula: total = (weights + kv for all concurrent requests) * (1 + overhead_fraction)"
 echo
 echo "RESULTS (modelled for $NAME):"
-RES=$(awk -v p="$PARAMS" -v l="$LAYERS" -v k="$KVH" -v h="$HD" -v b="$PB" -v c="$CTX" -v n="$CONC" -v o="$OVH" '
+# One awk program computes the total AND the fit verdict, from the exact total in bytes. The total
+# never leaves awk: printed with %d and parsed back by the shell, it clamped at 2^31-1 on awks
+# whose %d goes through a C int (mawk), and every model then "fit" every card. Integers print with
+# %.0f for the same reason.
+ROWS=""
+for a in $LIST; do
+  LABEL=$(conf_get "$ACCEL" "${a}_label")
+  MEM=$(conf_num "$ACCEL" "${a}_memory_gb")
+  ROWS="${ROWS}${LABEL}	${MEM}
+"
+done
+printf '%s' "$ROWS" | awk -F '\t' -v p="$PARAMS" -v l="$LAYERS" -v k="$KVH" -v h="$HD" -v b="$PB" -v c="$CTX" -v n="$CONC" -v o="$OVH" '
   BEGIN {
     w = p * b; kvt = 2 * l * k * h * b; kvr = kvt * c; kva = kvr * n
     tot = (w + kva) * (1 + o)
     printf "weights_gb=%.2f\n", w / 1e9
-    printf "kv_bytes_per_token=%d\n", kvt
+    printf "kv_bytes_per_token=%.0f\n", kvt
     printf "kv_gb_per_request=%.3f\n", kvr / 1e9
     printf "kv_gb_all_requests=%.2f\n", kva / 1e9
     printf "overhead_gb=%.2f\n", (w + kva) * o / 1e9
     printf "total_gb=%.2f\n", tot / 1e9
-    printf "total_bytes=%d\n", tot
-  }')
-printf '%s\n' "$RES" | grep -v '^total_bytes='
-TOTAL_BYTES=$(printf '%s\n' "$RES" | awk -F= '$1=="total_bytes"{print $2}')
-echo
-echo "FIT ON ONE ACCELERATOR (modelled, no tensor parallelism, vendor memory used as printed):"
-for a in $LIST; do
-  LABEL=$(conf_get "$ACCEL" "${a}_label")
-  MEM=$(conf_num "$ACCEL" "${a}_memory_gb")
-  awk -v t="$TOTAL_BYTES" -v m="$MEM" -v lab="$LABEL" 'BEGIN {
-    head = m - t / 1e9
-    printf "%-24s %5.0f GB  %-12s headroom_gb=%.2f\n", lab, m, (head >= 0 ? "fits" : "does not fit"), head
+    print ""
+    print "FIT ON ONE ACCELERATOR (modelled, no tensor parallelism, vendor memory used as printed):"
+  }
+  NF == 2 {
+    head = $2 - tot / 1e9
+    printf "%-24s %5.0f GB  %-12s headroom_gb=%.2f\n", $1, $2, (head >= 0 ? "fits" : "does not fit"), head
   }'
-done

@@ -18,10 +18,28 @@ LAYERS=$(conf_num "$MODEL" num_hidden_layers)
 KVH=$(conf_num "$MODEL" num_key_value_heads)
 HD=$(conf_num "$MODEL" head_dim)
 PB=$(conf_num "$SCEN" precision_bytes)
-CTX=$(conf_num "$SCEN" context_tokens)
+CTX=$(conf_pos "$SCEN" context_tokens)
 CONC=$(conf_num "$SCEN" concurrent_requests)
-BLK=$(conf_num "$SCEN" block_tokens)
+BLK=$(conf_pos "$SCEN" block_tokens)
 SAMPLE=$(conf_get "$SCEN" sequence_tokens_sample)
+# Each sample is one sequence length in tokens, space-separated: a whole number from 1 to
+# context_tokens. A longer one would give a negative reserved waste, none at all a division by
+# zero, and a comma-separated list would be read as its first number only.
+n_samples=0
+for L in $SAMPLE; do
+  case "$L" in
+    ''|*[!0-9]*) echo "error: sequence_tokens_sample in $SCEN must be whole numbers separated by spaces, found: $L" >&2; exit 2 ;;
+  esac
+  if ! awk -v l="$L" -v c="$CTX" 'BEGIN { exit !(l >= 1 && l <= c) }'; then
+    echo "error: sequence_tokens_sample in $SCEN: $L is outside 1 to context_tokens ($CTX)" >&2
+    exit 2
+  fi
+  n_samples=$((n_samples + 1))
+done
+if [ "$n_samples" -eq 0 ]; then
+  echo "error: sequence_tokens_sample in $SCEN holds no sequence length" >&2
+  exit 2
+fi
 
 assumptions_header
 echo "  model file: $MODEL"
@@ -36,13 +54,13 @@ awk -v l="$LAYERS" -v k="$KVH" -v h="$HD" -v b="$PB" -v ctx="$CTX" -v conc="$CON
 function ceil(x) { return (x == int(x)) ? x : int(x) + 1 }
 BEGIN {
   kvt = 2 * l * k * h * b
-  printf "block_bytes=%d\n", kvt * blk
+  printf "block_bytes=%.0f\n", kvt * blk
   printf "%-8s %-8s %-10s %-14s %-16s\n", "tokens", "blocks", "tail_waste", "paged_waste_pct", "reserved_waste_pct"
   n = split(sample, s, " ")
   for (i = 1; i <= n; i++) {
     L = s[i]; nb = ceil(L / blk); alloc = nb * blk
     waste = alloc - L; rwaste = ctx - L
-    printf "%-8d %-8d %-10d %-14.1f %-16.1f\n", L, nb, waste, 100 * waste / alloc, 100 * rwaste / ctx
+    printf "%-8.0f %-8.0f %-10.0f %-14.1f %-16.1f\n", L, nb, waste, 100 * waste / alloc, 100 * rwaste / ctx
     tw += waste; ta += alloc; tr += ctx - L; tl += L; tb += nb
   }
   printf "mean_blocks_per_request=%.1f\n", tb / n

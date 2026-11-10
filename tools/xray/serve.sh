@@ -64,4 +64,7 @@ echo "│"
 echo "│  Ctrl-C stops the proxy. Port busy? PORT=8002 bash tools/xray/serve.sh"
 echo "└─────────────────────────────────────────────────────────────"
 
-exec kubectl proxy --context "${CONTEXT}" --www="${XRAY_DIR}" --www-prefix=/xray/ --port="${PORT}"
+# The lens only ever GETs. The proxy forwards with the learner's credentials to anything that
+# can reach the port, so every writing method is refused at the proxy (review IN-09).
+exec kubectl proxy --context "${CONTEXT}" --www="${XRAY_DIR}" --www-prefix=/xray/ --port="${PORT}" \
+  --reject-methods='^(POST|PUT|PATCH|DELETE)$'

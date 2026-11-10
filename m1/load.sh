@@ -21,6 +21,15 @@ one() {
   $K exec client -- sh -c "wget -q -S -O /dev/null -T 3 --header 'Content-Type: application/json' --post-data '$BODY' http://sim:8000/v1/completions 2>&1 | grep -E 'HTTP/|wget:' | head -1" || true
 }
 
+# whole NAME VALUE — a count or duration must be a whole number of 1 or more. Checked before any
+# kubectl call: inside a `while [ ... -lt ... ]` a non-number is an error set -e does not see, so
+# the loop silently did nothing and exited 0; and these values are also written into a remote sh -c.
+whole() {
+  case "$2" in
+    ''|*[!0-9]*|0|00*) echo "load.sh: $1 must be a whole number of 1 or more, got: '$2'" >&2; exit 2 ;;
+  esac
+}
+
 mode="${1:-probe}"
 case "$mode" in
   probe)
@@ -31,6 +40,7 @@ case "$mode" in
     # sent on that log line can be refused. Send one request per second until one is answered,
     # printing every attempt, and give up after the bound with a non-zero exit.
     tries="${2:-30}"
+    whole attempts "$tries"
     n=1
     while [ "$n" -le "$tries" ]; do
       r="$(one)"
@@ -46,6 +56,7 @@ case "$mode" in
     ;;
   loop)
     secs="${2:-100}"
+    whole seconds "$secs"
     i=0
     while [ "$i" -lt "$secs" ]; do
       printf '%s %s\n' "$(date -u +%H:%M:%S)" "$(one)"
@@ -56,6 +67,8 @@ case "$mode" in
   load)
     workers="${2:-20}"
     secs="${3:-45}"
+    whole workers "$workers"
+    whole seconds "$secs"
     $K exec client -- sh -c "
       end=\$((\$(date +%s) + $secs))
       w=0
