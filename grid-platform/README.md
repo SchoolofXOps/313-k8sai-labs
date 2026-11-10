@@ -56,16 +56,17 @@ authored outside `labs/` in the private source repository, so the sync can never
 `main`; the cut copies them onto `grid-reference` by hand.
 
 **Starting mid-course.** From a current `main` checkout, fetch the course's tags and restore only
-this directory from the reference point:
+the two directories the reference point adds files to:
 
 ```bash
-git fetch --tags && git checkout grid-v0 -- grid-platform
+git fetch --tags && git checkout grid-v0 -- grid-platform/docs grid-platform/clusters
 ```
 
 If you have already renamed the course's remote to `upstream`, as the setup page asks, fetch from it
-by name: `git fetch upstream --tags`. Restoring `grid-platform` alone keeps the current lab scripts
-under `clusters/` and `tools/`. A whole-tree `git checkout grid-v0` would pin you to the scripts as
-they were when the tag was cut.
+by name: `git fetch upstream --tags`. Restoring those two directories alone keeps the current lab
+scripts under `clusters/` and `tools/`, and keeps this README as it is on `main`. A whole-tree
+`git checkout grid-v0` would pin you to the scripts as they were when the tag was cut, and restoring
+all of `grid-platform` would bring back the older copy of this README that the tag carries.
 
 **Learners never cut `grid-v*` tags.** That name space is the course's. Your clone fetches the
 course's tags, so a `grid-v0` of your own collides with it. Commit with the module named in the
