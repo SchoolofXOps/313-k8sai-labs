@@ -172,6 +172,18 @@ platform_check_refs() {
         if (SELF.has(p)) continue;
         const text = fs.readFileSync(p, "utf8");
         for (const m of text.matchAll(RE)) {
+          // A match right after a `.` or a `\` is a FRAGMENT, never a
+          // reference: a checks file asserts a pin with the anchored regex
+          // `^ghcr\\.io/...@sha256:<d>$`, and the pattern, unable to start on
+          // the backslash or the dot, starts on `io`. That collected
+          // `io/llm-d/...`, a repository no registry has, and failed both
+          // arms of profiles.yml (run 43377409201, plan 05-24). A real
+          // reference preceded by a letter or digit would have matched from
+          // that earlier character, so nothing real is skipped; the unescaped
+          // reference sits in the manifest the regex checks, which this walk
+          // also reads. scripts/platform-check-collector.test.mjs.
+          const before = m.index > 0 ? text[m.index - 1] : "";
+          if (before === "." || before === "\\") continue;
           // Strip a tag sitting between the repository and the digest. The
           // digest is what identifies the image; the tag beside it is
           // decoration that some registries reject on an inspect.
