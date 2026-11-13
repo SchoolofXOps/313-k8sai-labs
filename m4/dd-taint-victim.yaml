@@ -1,0 +1,28 @@
+# Deep dive, section 4 — a running Pod whose claim's device is then tainted NoExecute.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: taint-victim-claim
+  namespace: m4-deepdive
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator.example.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: taint-victim
+  namespace: m4-deepdive
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: taint-victim-claim
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

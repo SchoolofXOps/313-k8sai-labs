@@ -1,0 +1,71 @@
+# Part 5, the brief's fallback for the counter failure (planning/plans/m4-plan.md § 6, part 5).
+# Used only if the live run shows the partition selectors above cannot pin one parent device.
+# Consumable capacity: two claims on the same index-6 device each ask for 60 of its 100 compute,
+# so the second cannot fit. Needs GPU_ALLOW_MULTIPLE_ALLOCATIONS=true. The run records which ran.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: capacity-first
+  namespace: m4-sharing
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator-class
+        selectors:
+        - cel:
+            expression: "device.attributes['sim-accelerator.example.com'].index == 6"
+        capacity:
+          requests:
+            compute: "60"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: capacity-second
+  namespace: m4-sharing
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator-class
+        selectors:
+        - cel:
+            expression: "device.attributes['sim-accelerator.example.com'].index == 6"
+        capacity:
+          requests:
+            compute: "60"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: capacity-a
+  namespace: m4-sharing
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: capacity-first
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: capacity-b
+  namespace: m4-sharing
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: capacity-second
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

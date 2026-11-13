@@ -24,7 +24,7 @@ scripts, so the signal you learn to look for on one works on all of them.
 | Path | What it is |
 |---|---|
 | `clusters/grid-core/` | The base profile — the pinned kind cluster the course builds on. `create.sh`, `verify.sh`, `teardown.sh` |
-| `clusters/grid-sandbox/` | A separate profile carrying the gVisor `runsc` runtime, for the sandboxed-workload labs. Its teardown rebuilds and re-verifies the base profile |
+| `clusters/grid-sandbox/` | A separate profile carrying the gVisor `runsc` runtime and an API-server audit log, for the sandboxed-workload labs. Its teardown rebuilds and re-verifies the base profile |
 
 ### The layers you apply onto the base cluster
 
@@ -58,6 +58,9 @@ repository's root, like everything else here.
 |---|---|
 | `m1/` | Module 1's lab: the namespace, simulator, client, HPA and metrics-server manifests, the load script, and the lab's checks files |
 | `m2/` | Module 2's lab: the sizing calculators, the input files they read, and the lab's checks files. They are plain shell arithmetic and need no cluster |
+| `m3/` | Module 3's lab: `kar-list.sh`, which lists the Kubernetes AI Conformance requirements from a pinned commit and reads nothing from your cluster, and the lab's checks files |
+| `m4/` | Module 4's lab: the DeviceClass, ResourceClaim and Pod manifests for the synthetic devices the DRA example driver publishes, the device-health and XID evidence inputs, the image pin register `PINS.md`, and the lab's checks files |
+| `m11/` | Module 11's lab: the sandboxed and plain probe Pods with their probe script, the MCP tool server and its client, the scripted actor and its RBAC, the egress policies, and the lab's checks files. It runs on the `clusters/grid-sandbox/` profile |
 | `tools/xray/` | Cluster X-Ray, a live view of your own cluster in the browser: `bash tools/xray/serve.sh`. Its `README.md` says what each lens shows |
 
 ## Shared helpers

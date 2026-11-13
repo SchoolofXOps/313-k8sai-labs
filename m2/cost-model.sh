@@ -12,20 +12,25 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 C="$1"
-N=$(conf_num "$C" accelerators)
-HRS=$(conf_num "$C" hours_per_year)
+N=$(conf_pos "$C" accelerators)
+HRS=$(conf_pos "$C" hours_per_year)
 BASIS=$(conf_get "$C" price_basis)
-PRICE=$(conf_num "$C" "price_${BASIS}_usd_per_accel_hour")
+PRICE=$(conf_pos "$C" "price_${BASIS}_usd_per_accel_hour")
 PD=$(conf_num "$C" price_on_demand_usd_per_accel_hour)
 PR=$(conf_num "$C" price_reserved_usd_per_accel_hour)
 PS=$(conf_num "$C" price_spot_usd_per_accel_hour)
-UL=$(conf_num "$C" utilisation_low)
-UH=$(conf_num "$C" utilisation_high)
+UL=$(conf_pos "$C" utilisation_low)
+UH=$(conf_pos "$C" utilisation_high)
 TPS=$(conf_num "$C" tokens_per_second_per_accelerator)
 SH=$(conf_num "$C" share_utilisation_gain)
 QU=$(conf_num "$C" queue_utilisation_gain)
 PK=$(conf_num "$C" pack_accelerators_released)
 RC=$(conf_num "$C" reclaim_idle_fraction)
+# pack divides by the accelerators left after the release, so at least one must be left.
+if ! awk -v n="$N" -v pk="$PK" 'BEGIN { exit !(pk < n) }'; then
+  echo "error: pack_accelerators_released ($PK) must be fewer than accelerators ($N) in $C" >&2
+  exit 2
+fi
 
 assumptions_header
 echo "  cost file: $C"
@@ -37,19 +42,26 @@ echo
 
 awk -v n="$N" -v hrs="$HRS" -v basis="$BASIS" -v price="$PRICE" -v pd="$PD" -v pr="$PR" -v ps="$PS" \
     -v ul="$UL" -v uh="$UH" -v tps="$TPS" -v sh="$SH" -v qu="$QU" -v pk="$PK" -v rc="$RC" '
+# Every printed money and hour figure is rounded ONCE, by r(), and every figure derived from
+# printed ones (the saving of a lever, a rate per useful hour) is computed from the rounded values, so
+# the printed numbers reproduce each other: the cost of a lever plus its saving is the fleet cost, and
+# cost / hours is the printed rate. Integers print with %.0f, never %d: some awks (mawk) pass %d
+# through a C int, which clamps at 2^31-1 and truncates.
+function r(x) { return int(x + 0.5) }
+function rate(cost, hours) { return (hours > 0) ? sprintf("%.2f", cost / hours) : "n/a" }
 function row(tag, u, cost, accel,    useful) {
-  useful = accel * hrs * u
-  printf "%-8s utilisation=%.2f useful_accel_hours=%d cost_usd=%d usd_per_useful_accel_hour=%.2f useful_tokens_per_usd=%d\n", \
-    tag, u, useful, cost, cost / useful, tps * 3600 * u / price
+  useful = r(accel * hrs * u)
+  printf "%-8s utilisation=%.2f useful_accel_hours=%.0f cost_usd=%.0f usd_per_useful_accel_hour=%s useful_tokens_per_usd=%.0f\n", \
+    tag, u, useful, cost, rate(cost, useful), r(tps * 3600 * u / price)
 }
 BEGIN {
-  cost = n * hrs * price
+  cost = r(n * hrs * price)
   print "RESULTS (modelled):"
-  printf "accelerator_hours_per_year=%d\n", n * hrs
-  printf "annual_fleet_cost_usd=%d\n", cost
-  printf "annual_cost_on_demand_usd=%d\n", n * hrs * pd
-  printf "annual_cost_reserved_usd=%d\n", n * hrs * pr
-  printf "annual_cost_spot_usd=%d\n", n * hrs * ps
+  printf "accelerator_hours_per_year=%.0f\n", r(n * hrs)
+  printf "annual_fleet_cost_usd=%.0f\n", cost
+  printf "annual_cost_on_demand_usd=%.0f\n", r(n * hrs * pd)
+  printf "annual_cost_reserved_usd=%.0f\n", r(n * hrs * pr)
+  printf "annual_cost_spot_usd=%.0f\n", r(n * hrs * ps)
   printf "price_basis=%s usd_per_accel_hour=%.2f\n", basis, price
   print ""
   print "FLEET AT TWO UTILISATION LEVELS:"
@@ -60,17 +72,19 @@ BEGIN {
   row("base", ul, cost, n)
   row("share", ul + sh, cost, n)
   row("queue", ul + qu, cost, n)
-  # pack: same useful hours on fewer accelerators
+  # pack: same useful hours on fewer accelerators; the saving is what the fleet cost loses
   useful0 = n * hrs * ul
+  u0 = r(useful0)
   nn = n - pk
-  printf "%-8s accelerators=%d utilisation=%.2f useful_accel_hours=%d cost_usd=%d usd_per_useful_accel_hour=%.2f saving_usd=%d\n", \
-    "pack", nn, useful0 / (nn * hrs), useful0, nn * hrs * price, nn * hrs * price / useful0, pk * hrs * price
+  pcost = r(nn * hrs * price)
+  printf "%-8s accelerators=%.0f utilisation=%.2f useful_accel_hours=%.0f cost_usd=%.0f usd_per_useful_accel_hour=%s saving_usd=%.0f\n", \
+    "pack", nn, useful0 / (nn * hrs), u0, pcost, rate(pcost, u0), cost - pcost
   # reclaim: return a fraction of idle hours, so they are not paid for
   # whole hours, rounded once, so the printed hours, cost and saving agree with each other
   idle = n * hrs * (1 - ul)
-  ret = int(idle * rc + 0.5)
-  rsave = int(ret * price + 0.5)
+  ret = r(idle * rc)
+  rsave = r(ret * price)
   rcost = cost - rsave
-  printf "%-8s idle_hours_returned=%d utilisation=%.2f useful_accel_hours=%d cost_usd=%d usd_per_useful_accel_hour=%.2f saving_usd=%d\n", \
-    "reclaim", ret, useful0 / (n * hrs - ret), useful0, rcost, rcost / useful0, rsave
+  printf "%-8s idle_hours_returned=%.0f utilisation=%.2f useful_accel_hours=%.0f cost_usd=%.0f usd_per_useful_accel_hour=%s saving_usd=%.0f\n", \
+    "reclaim", ret, useful0 / (n * hrs - ret), u0, rcost, rate(rcost, u0), rsave
 }'

@@ -1,0 +1,32 @@
+# labs/m11/egress-deny.yaml — both probe Pods may resolve names and reach nothing else
+#
+# Egress is a NETWORK decision, not a runtime one. gVisor changes which kernel
+# a workload talks to; it does not decide where the workload's packets may go.
+# So the lab's first probe runs happen with no policy at all, and the
+# `outbound` row reads the same in both Pods. This policy is the decision.
+#
+# Selects both probe Pods by app.kubernetes.io/part-of: m11-probes (set on
+# probe-sandbox's Pod template and on probe-plain). policyTypes: [Egress] with
+# one rule: DNS on port 53, UDP and TCP, to anywhere. Every other outbound
+# connection from a selected Pod is denied.
+#
+# On kind, NetworkPolicy is enforced by kindnet's kube-network-policies. Whether
+# it acts on a runsc Pod is read live: the lab re-runs `outbound` in
+# probe-sandbox after this is applied, and that run decides.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-egress-deny
+  namespace: agent-probes
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: m11-probes
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

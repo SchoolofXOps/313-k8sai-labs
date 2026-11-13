@@ -1,0 +1,60 @@
+# NEVER APPLIED IN THIS COURSE. Read it with cat; do not apply it, not even as a dry run.
+#
+# labs/m11/warm-pool.yaml — what allocation from a warm pool looks like, as objects
+#
+# Both kinds below live in the EXTENSIONS group, extensions.agents.x-k8s.io/v1beta1,
+# which Agent Sandbox v1.0.5 ships as a separate release asset (extensions.yaml).
+# This course installs the core asset, sandbox.yaml, and nothing else, so the
+# API server in grid-sandbox does not serve these kinds: an apply is rejected,
+# and a client dry run fails too, because it needs the CRD's discovery entry.
+#
+# Fields are taken from the v1.0.5 extensions.yaml asset's CRD schemas, read
+# 2026-11-11 (sha256 071d4966a085cf0b70a7b4786ed4c48351a133c10beae1a01ad921515952d40d):
+#   SandboxTemplate.spec requires podTemplate.
+#   SandboxWarmPool.spec requires sandboxTemplateRef; replicas (default 1) and
+#   updateStrategy.type (Recreate | OnReplenish, default OnReplenish) are optional.
+#
+# How it would work: the pool controller keeps `replicas` Sandboxes created from
+# the template and Ready, ahead of demand. A claim (SandboxClaim, also in the
+# extensions group, not shown) takes one that is already Ready, so the caller
+# waits for a hand-over rather than for a cold start, and the pool replenishes.
+#
+# Why it is not run here: a pool of 5 runsc Sandboxes is the 16 GB machine's
+# path, and the per-sandbox memory gVisor adds has not been measured in this
+# course's declared environment. RuntimeClass `runsc` carries no
+# overhead.podFixed yet, so the scheduler would not account for that memory.
+# The live pool waits until that measurement exists.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: runsc-agent-template
+  namespace: agent-probes
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: m11-warm-pool
+    spec:
+      runtimeClassName: runsc
+      containers:
+        - name: agent
+          image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: runsc-agent-pool
+  namespace: agent-probes
+spec:
+  replicas: 5
+  sandboxTemplateRef:
+    name: runsc-agent-template
+  updateStrategy:
+    type: OnReplenish

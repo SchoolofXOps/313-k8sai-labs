@@ -14,8 +14,8 @@ fi
 MODEL="$1"
 ACCEL="$HERE/inputs/accelerators.conf"
 NAME=$(conf_get "$MODEL" name)
-PARAMS=$(conf_num "$MODEL" parameters)
-PB=$(conf_num "$MODEL" native_precision_bytes)
+PARAMS=$(conf_pos "$MODEL" parameters)
+PB=$(conf_pos "$MODEL" native_precision_bytes)
 LIST=$(conf_get "$ACCEL" accelerators)
 
 assumptions_header

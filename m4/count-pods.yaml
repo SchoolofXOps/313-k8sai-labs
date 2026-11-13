@@ -1,0 +1,30 @@
+# Part 1 — counting devices as an extended resource.
+# The node advertises sim-accelerator.example.com/device: 4 on its status (the lab patches it).
+# count-fits asks for 1 and schedules. count-over asks for 5, one more than the node advertises,
+# and stays unschedulable. The integer is all the scheduler sees: no attributes, no sharing,
+# no topology and no claim lifecycle.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: count-fits
+  namespace: m4-count
+spec:
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      limits:
+        sim-accelerator.example.com/device: 1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: count-over
+  namespace: m4-count
+spec:
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      limits:
+        sim-accelerator.example.com/device: 5

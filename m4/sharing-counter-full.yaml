@@ -1,0 +1,38 @@
+# Part 5, representation 2 — partitionable devices with shared counters.
+# Apply only after the driver has been switched to GPU_PARTITIONS=4. In that mode the driver
+# (dra-example-driver v0.5.0, internal/profiles/gpu/gpu.go) publishes, for every device index,
+# one counter set, four partition devices and one whole-device entry. All five consume from the
+# same counter set, and the whole-device entry consumes all of it.
+#
+# This claim takes the whole-device entry for index 6: the attribute `full` is published on the
+# whole-device entry only. Index 6 is used because the earlier parts' claims hold lower indexes.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: counter-full
+  namespace: m4-sharing
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator-class
+        selectors:
+        - cel:
+            expression: "device.attributes['sim-accelerator.example.com'].index == 6 && 'full' in device.attributes['sim-accelerator.example.com']"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: counter-a
+  namespace: m4-sharing
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: counter-full
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

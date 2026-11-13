@@ -1,0 +1,29 @@
+# Deep dive, section 3 — a claim made AFTER the driver is switched to GPU_DEVICE_STATUS=true, so the
+# driver writes per-device data into the claim's status.devices.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: dd-status-claim
+  namespace: m4-deepdive
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator.example.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dd-status
+  namespace: m4-deepdive
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: dd-status-claim
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

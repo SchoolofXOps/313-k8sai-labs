@@ -1,0 +1,32 @@
+# Part 4 — the extended-resource bridge. THE ONLY FILE UNDER m4/ THAT CARRIES THE VENDOR
+# RESOURCE NAME (STANDARDS.md C23).
+#
+# The DeviceClass maps the vendor's extended resource name onto the synthetic driver's devices.
+# The Pod asks for that name in resources.limits and carries no resourceClaims at all, exactly as
+# an existing device-plugin workload would. The scheduler creates the claim for it.
+#
+# The resource name says NVIDIA; the device behind it is synthetic. A resource name is a
+# matching key, not a hardware claim.
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: sim-accelerator-bridge
+spec:
+  extendedResourceName: nvidia.com/gpu
+  selectors:
+  - cel:
+      expression: "device.driver == 'sim-accelerator.example.com'"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unchanged-manifest
+  namespace: m4-bridge
+spec:
+  containers:
+  - name: workload
+    image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "env; sleep 3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

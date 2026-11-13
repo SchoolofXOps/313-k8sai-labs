@@ -1,0 +1,70 @@
+# labs/m11/dd-cluster-trust-bundle.yaml — deep dive: a ClusterTrustBundle with no signer
+#
+# certificates.k8s.io/v1 ClusterTrustBundle, GA in Kubernetes 1.37. An
+# administrator publishes a set of CA certificates as a cluster-scoped object,
+# and a Pod receives them as a file through a projected volume, with no Secret,
+# no ConfigMap copy per namespace and no signer involved.
+#
+# spec.signerName is left EMPTY on purpose. A bundle tied to a signer name is
+# how a signer advertises its own roots; this one is an admin-published bundle,
+# which is the part of the feature that runs without any signer, and at 1.37 no
+# built-in Pod Certificate signer ships.
+#
+# The certificate below is a throwaway, self-signed CA generated for this lab
+# on 2026-11-11 (CN "m11-demo-bundle CA (course lab, not trusted by anything)",
+# EC P-256, valid to 2036-11-08, SHA-256 fingerprint
+# 47:E2:31:4E:D6:EE:A0:66:B4:50:21:91:CE:48:DD:A6:58:49:34:36:D6:E0:BF:DD:72:3B:10:6A:90:50:46:49).
+# Its private key was deleted the moment the certificate was written, so
+# nothing can ever be signed by it. It is public data and trusts nothing.
+apiVersion: certificates.k8s.io/v1
+kind: ClusterTrustBundle
+metadata:
+  name: m11-demo-bundle
+spec:
+  trustBundle: |
+    -----BEGIN CERTIFICATE-----
+    MIIBuzCCAWCgAwIBAgIUVFN+qDBcXQRmlFyJeZm2K8EiR60wCgYIKoZIzj0EAwIw
+    QzFBMD8GA1UEAww4bTExLWRlbW8tYnVuZGxlIENBIChjb3Vyc2UgbGFiLCBub3Qg
+    dHJ1c3RlZCBieSBhbnl0aGluZykwHhcNMjYxMTExMTM0NjA1WhcNMzYxMTA4MTM0
+    NjA1WjBDMUEwPwYDVQQDDDhtMTEtZGVtby1idW5kbGUgQ0EgKGNvdXJzZSBsYWIs
+    IG5vdCB0cnVzdGVkIGJ5IGFueXRoaW5nKTBZMBMGByqGSM49AgEGCCqGSM49AwEH
+    A0IABMkKRvHhx7Fx3dtImOrF1IKeHdkBKX1SM3fX7vRvUt64ZPHI6Z6A3ZIgxdHP
+    ucoNZ/vW+IxxRHoiYT+hzreAhc+jMjAwMB0GA1UdDgQWBBSIFXwnb79afHCjU0Ea
+    bT4RSmY5ADAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0kAMEYCIQDqSy7X
+    hnERxJ10NNBxUOZNiKfb81cZluLOFyoqExDfpgIhAJ6O0YbcS2CpjApND7CccFBX
+    Cv9YEYbouJ89iQjL8SWd
+    -----END CERTIFICATE-----
+---
+# The Pod that reads the bundle back. The clusterTrustBundle projected-volume
+# source (ClusterTrustBundleProjection, GA in 1.37) writes the bundle's PEM to
+# /var/run/ctb/bundle.pem. The kubelet keeps the file in step with the object.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ctb-reader
+  namespace: agent-probes
+  labels:
+    app.kubernetes.io/part-of: m11
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: reader
+      image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+      command: ["sh", "-c", "sleep 3600"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
+      volumeMounts:
+        - name: bundle
+          mountPath: /var/run/ctb
+          readOnly: true
+  volumes:
+    - name: bundle
+      projected:
+        sources:
+          - clusterTrustBundle:
+              name: m11-demo-bundle
+              path: bundle.pem

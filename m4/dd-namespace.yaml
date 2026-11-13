@@ -1,0 +1,5 @@
+# Deep dive namespace. The deep dive uses at most two synthetic devices at any one time.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-deepdive

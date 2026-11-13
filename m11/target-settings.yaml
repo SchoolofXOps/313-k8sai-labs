@@ -1,0 +1,13 @@
+# labs/m11/target-settings.yaml — the tenant setting the actor wants changed
+#
+# Created by the learner, in agent-target, before the actor runs. The actor
+# reads it, is refused when it tries to change it, and proposes the change
+# instead. The learner applies the proposal under their own identity, and the
+# audit log records both.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: target-settings
+  namespace: agent-target
+data:
+  mode: steady

@@ -15,6 +15,13 @@
       "assert": { "matches": "v1\\.37\\." }
     },
     {
+      "id": "audit-policy-wired",
+      "describe": "the API server writes the audit log M11 reads its denied-mutation evidence from (plan 05-04, CONTEXT D-30): both audit flags are read from the RUNNING kube-apiserver static Pod's command, never inferred from create.sh, because a kubeadm patch in a dialect kind does not match is dropped in silence and the cluster still comes up healthy. The policy file is baked into the node image, so --audit-policy-file names an in-image path; --audit-log-path=- is the API server's stdout, read with kubectl logs. Printed sorted, so the order is fixed and the anchored regex refuses either flag missing or the log sent to a file",
+      "weight": 2,
+      "run": "bash -c 'set -eu; export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\"; A=$(kubectl --context kind-grid-sandbox -n kube-system get pod kube-apiserver-grid-sandbox-control-plane -o jsonpath=\"{.spec.containers[0].command[*]}\"); for f in $A; do case \"$f\" in --audit-policy-file=*|--audit-log-path=*) printf \"%s\\n\" \"$f\" ;; esac; done | LC_ALL=C sort | tr \"\\n\" \" \"'",
+      "assert": { "matches": "^--audit-log-path=- --audit-policy-file=/etc/kubernetes/policies/audit-policy\\.yaml $" }
+    },
+    {
       "id": "runtimeclass-object-exists-with-its-handler",
       "describe": "the RuntimeClass object exists and its handler matches the containerd stanza name the node image registered. The object alone proves NOTHING about the node — applying it to a stock cluster succeeds too — which is why the next two entries exist",
       "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox get runtimeclass runsc -o jsonpath='{.metadata.name}/{.handler}'",
@@ -29,7 +36,7 @@
     },
     {
       "id": "probe-pod-reports-the-sandbox-kernel",
-      "describe": "THE ENTRY THAT EARNS THIS FILE ITS KEEP. A Pod under runtimeClassName: runsc reports the sandbox kernel identity read from INSIDE ITSELF. A Running phase proves nothing: a silent containerd fallback to the default runtime leaves the Pod Running and the cluster healthy and is indistinguishable from success anywhere outside the Pod. This is an IDENTITY assertion, never a security one",
+      "describe": "THE ENTRY THAT EARNS THIS FILE ITS KEEP. A Pod under runtimeClassName: runsc reports the sandbox kernel identity read from INSIDE ITSELF. A Running phase proves nothing: a Pod on the default runtime (one with no runtimeClassName, or a RuntimeClass whose handler names runc) is Running in a healthy cluster too, indistinguishable from success anywhere outside the Pod. A handler missing from containerd is not silent: the Pod never starts. This is an IDENTITY assertion, never a security one",
       "weight": 3,
       "run": "bash -c 'set -eu; export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\"; K=\"kubectl --context kind-grid-sandbox\"; $K delete pod checks-runsc-probe --ignore-not-found --wait=true >/dev/null 2>&1 || true; printf \"%s\\n\" \"apiVersion: v1\" \"kind: Pod\" \"metadata: {name: checks-runsc-probe}\" \"spec:\" \"  runtimeClassName: runsc\" \"  restartPolicy: Never\" \"  tolerations: [{operator: Exists}]\" \"  containers:\" \"  - name: probe\" \"    image: busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e\" \"    command: [sh, -c, sleep 300]\" | $K apply -f - >/dev/null; $K wait --for=condition=Ready pod/checks-runsc-probe --timeout=180s >/dev/null; V=$($K exec checks-runsc-probe -- cat /proc/version); $K delete pod checks-runsc-probe --ignore-not-found --wait=false >/dev/null 2>&1 || true; printf \"in-pod /proc/version: %s\\n\" \"$V\"'",
       "assert": { "matches": "^in-pod /proc/version: Linux version .*gvisor" }

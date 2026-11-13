@@ -12,7 +12,7 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 F="$1"
-N=$(conf_num "$F" participants)
+N=$(conf_pos "$F" participants)
 S=$(conf_num "$F" message_gb)
 LIST=$(conf_get "$F" links)
 
@@ -25,7 +25,7 @@ echo
 echo "RESULTS (modelled):"
 for l in $LIST; do
   LABEL=$(conf_get "$F" "${l}_label")
-  B=$(conf_num "$F" "${l}_gb_s")
+  B=$(conf_pos "$F" "${l}_gb_s")
   awk -v n="$N" -v s="$S" -v b="$B" -v lab="$LABEL" -v key="$l" 'BEGIN {
     printf "%-12s %-28s B=%6.1f GB/s time_s=%.4f (estimate)\n", key, lab, b, 2 * (n - 1) / n * s / b
   }'

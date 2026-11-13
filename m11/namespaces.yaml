@@ -1,0 +1,38 @@
+# labs/m11/namespaces.yaml — the four namespaces Module 11's lab uses
+#
+# Only three of them are AUDITED: agent-mcp, agent-actor and agent-target. The
+# grid-sandbox API server's audit policy (labs/sandbox/runsc-node/audit-policy.yaml)
+# names exactly those three, letter for letter, plus the two ServiceAccount
+# groups system:serviceaccounts:agent-mcp and system:serviceaccounts:agent-actor.
+# A lab object that has to show up in the audit trail lives in one of them.
+#
+# agent-probes holds the sandboxes, the plain comparison Pod and the egress
+# policies. It is not audited, and it does not need to be: its evidence is read
+# from inside the Pods, never from the API server's log.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-probes
+  labels:
+    app.kubernetes.io/part-of: m11
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-mcp
+  labels:
+    app.kubernetes.io/part-of: m11
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-actor
+  labels:
+    app.kubernetes.io/part-of: m11
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-target
+  labels:
+    app.kubernetes.io/part-of: m11

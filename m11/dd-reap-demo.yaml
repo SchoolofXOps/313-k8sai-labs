@@ -1,0 +1,38 @@
+# labs/m11/dd-reap-demo.yaml — deep dive: a Sandbox that deletes itself at a set time
+#
+# spec.shutdownTime is an RFC 3339 instant. When it passes, the controller acts
+# on spec.shutdownPolicy, an enum read from the v1.0.5 CRD schema
+# (Delete | Retain, default Retain). With Delete the Sandbox object is deleted,
+# and its Pod goes with it through the Pod's ownerReferences. The schema carries
+# no field descriptions, so what Retain does to the Pod is not stated here; the
+# deep dive runs Delete only.
+#
+# The deep dive sets shutdownTime about two minutes ahead with sed on the way
+# in, replacing the past instant below:
+#
+#   T=$(jq -nr 'now + 120 | todate')
+#   sed "s/2000-01-01T00:00:00Z/$T/" m11/dd-reap-demo.yaml | kubectl ... apply -f -
+#
+# Applied unedited, the instant is already past and the Sandbox is reaped at
+# once, which is harmless and shows the same thing faster.
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: reap-demo
+  namespace: agent-probes
+spec:
+  shutdownTime: "2000-01-01T00:00:00Z"
+  shutdownPolicy: Delete
+  podTemplate:
+    spec:
+      runtimeClassName: runsc
+      containers:
+        - name: agent
+          image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

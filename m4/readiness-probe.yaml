@@ -1,0 +1,29 @@
+# Part 2 — a new claim made while the readiness gate is in place. It stays unallocated until the
+# DeviceTaintRule is deleted.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: readiness-probe-claim
+  namespace: m4-lifecycle
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator.example.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: readiness-probe
+  namespace: m4-lifecycle
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: readiness-probe-claim
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

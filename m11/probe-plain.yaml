@@ -1,0 +1,35 @@
+# labs/m11/probe-plain.yaml — the comparison Pod, on the default runtime handler
+#
+# No runtimeClassName, so the kubelet hands this Pod to the node's default
+# handler (runc). The podAffinity puts it on the SAME node as probe-sandbox's
+# Pod, so the two probe runs differ in the runtime and in nothing else the lab
+# controls.
+#
+# It also gives the lab the node's own host kernel: /proc/version read from
+# inside this Pod is the kernel of the machine the node runs on.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-plain
+  namespace: agent-probes
+  labels:
+    app.kubernetes.io/name: probe-plain
+    app.kubernetes.io/part-of: m11-probes
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: probe-sandbox
+          topologyKey: kubernetes.io/hostname
+  containers:
+    - name: agent
+      image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+      command: ["sh", "-c", "sleep 3600"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 128Mi

@@ -2,7 +2,8 @@
 # grid-sandbox profile — verify
 # Asserts the grid-sandbox cluster exists, every node is Ready, the node count
 # AGREES WITH THE REQUESTED SIZE, the kubelet reports a 1.37.x version (the
-# pin), the API server answers /readyz, the sandbox runtime binary is present
+# pin), the API server answers /readyz and writes its audit log (both audit
+# flags read from the running kube-apiserver Pod), the sandbox runtime binary is present
 # INSIDE the node container, the RuntimeClass resolves to the handler the node
 # image registered, and — the assertion the whole script exists for — a Pod
 # running under that RuntimeClass reports the SANDBOX KERNEL IDENTITY read
@@ -10,13 +11,13 @@
 #
 # A RUNNING PHASE PROVES NOTHING. This is the single most important sentence
 # in this file. A RuntimeClass is only a NAME; the kubelet hands its `handler`
-# to containerd, which looks that name up among its own runtime handlers. If
-# the handler is absent or the stanza was written in a dialect containerd
-# ignored, containerd serves the Pod with the DEFAULT RUNTIME and the Pod
-# reaches Running exactly as it would have under the sandbox. A successful
-# create, a Ready node, a Running Pod and a healthy cluster are all
-# BYTE-IDENTICAL in the silent-fallback case. The kernel identity read from
-# within the Pod is the only evidence that distinguishes them.
+# to containerd, which looks that name up among its own runtime handlers. A
+# handler containerd does not have is LOUD, not silent: the sandbox is never
+# created ("no runtime for ... is configured") and the Pod never starts. The
+# SILENT case is a Pod on the DEFAULT RUNTIME -- no runtimeClassName, or a
+# RuntimeClass whose handler names runc -- where a successful create, a Ready
+# node, a Running Pod and a healthy cluster are all BYTE-IDENTICAL to success.
+# The kernel identity read from within the Pod is the only evidence.
 #
 # The assertion below is LIFTED from .github/workflows/arch-matrix.yml rather
 # than re-invented, so the laptop arm and the CI arm assert the same thing on
@@ -92,8 +93,8 @@ export KUBECONFIG="${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}"
 
 # The runtime handler name. ONE literal, used for the binary probe, the
 # RuntimeClass object and the Pod's runtimeClassName, because a mismatch
-# between any two of them is the silent-fallback failure this script exists to
-# catch and three copies is three chances to introduce it.
+# between any two of them is a failure this script exists to catch, and three
+# copies is three chances to introduce it.
 RUNTIME_HANDLER="${RUNTIME_HANDLER:-runsc}"
 RUNTIMECLASS_FILE="${LABS_DIR}/sandbox/runsc-node/runtimeclass.yaml"
 
@@ -165,6 +166,35 @@ if ! kc get --raw='/readyz' >/dev/null 2>&1; then
   echo "FAIL: API server /readyz did not answer. Inspect: kubectl --context ${CONTEXT} get --raw=/readyz" >&2
   exit 1
 fi
+
+# --- the API server writes an audit log, read from the RUNNING static Pod -----
+# Plan 05-04, CONTEXT D-30: M11's denied-mutation evidence is read from this
+# log. The flags are asserted on the Pod's own command, not inferred from
+# create.sh: a kubeadm patch written in a dialect kind does not match is
+# dropped without a word, the cluster comes up healthy, and the only place the
+# loss is visible is the API server's argument list. A cluster created before
+# this change, or from a node image built before it, fails here too.
+# Captured into a variable and matched with `case`, never `| grep -q`, for the
+# SIGPIPE reason create.sh states. Space-delimited on both sides so a flag is
+# matched whole: `--audit-log-path=-` must not match `--audit-log-path=-x`.
+APISERVER_POD="kube-apiserver-${CLUSTER_NAME}-control-plane"
+AUDIT_POLICY_FLAG="--audit-policy-file=/etc/kubernetes/policies/audit-policy.yaml"
+AUDIT_LOG_FLAG="--audit-log-path=-"
+APISERVER_ARGS="$(kc -n kube-system get pod "${APISERVER_POD}" \
+                    -o jsonpath='{.spec.containers[0].command[*]}' 2>/dev/null || true)"
+for _flag in "${AUDIT_POLICY_FLAG}" "${AUDIT_LOG_FLAG}"; do
+  case " ${APISERVER_ARGS} " in
+    *" ${_flag} "*) : ;;
+    *)
+      echo "FAIL: the API server is not writing the audit log: '${_flag}' is absent from the" >&2
+      echo "      command of ${APISERVER_POD}. M11 reads its audit evidence from that log." >&2
+      echo "      Inspect: kubectl --context ${CONTEXT} -n kube-system get pod ${APISERVER_POD} -o jsonpath='{.spec.containers[0].command}'" >&2
+      echo "      Audit flags are create-time: rebuild the node image, then recreate the profile:" >&2
+      echo "        bash ${LABS_DIR}/sandbox/runsc-node/build.sh && ${RECREATE}" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # --- the runtime is IN THE NODE, proven before any Pod is asked to use it ----
 NODE_CONTAINER="${CLUSTER_NAME}-control-plane"
@@ -268,10 +298,11 @@ NODE_IMAGE_IN_USE="$(docker inspect -f '{{.Config.Image}}' "${NODE_CONTAINER}" 2
 
 kc delete pod "${PROBE_POD}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 
-echo "OK: grid-sandbox verified at SIZE=${SIZE} — ${NODE_COUNT}/${EXPECTED_NODES} nodes Ready, kubelet ${KUBELET_VERSION}, API server /readyz healthy, RuntimeClass ${RUNTIME_HANDLER} resolves, and the probe Pod reported the kernel identity ${POD_UNAME_R} from INSIDE itself."
+echo "OK: grid-sandbox verified at SIZE=${SIZE} — ${NODE_COUNT}/${EXPECTED_NODES} nodes Ready, kubelet ${KUBELET_VERSION}, API server /readyz healthy, the audit log is on (${AUDIT_POLICY_FLAG} ${AUDIT_LOG_FLAG}), RuntimeClass ${RUNTIME_HANDLER} resolves, and the probe Pod reported the kernel identity ${POD_UNAME_R} from INSIDE itself."
 echo "  /proc/version in-Pod:  ${POD_PROC_VERSION}"
 echo "  /proc/version on node: ${NODE_PROC_VERSION}"
 echo "  node image in use:     ${NODE_IMAGE_IN_USE}"
+echo "  audit log:  kubectl --context ${CONTEXT} -n kube-system logs ${APISERVER_POD}   (Metadata level, M11's namespaces and groups)"
 echo "  context:    ${CONTEXT}"
 echo "  kubeconfig: ${KUBECONFIG}"
 echo "  size:       SIZE=${SIZE} -> 1 control-plane + ${WORKER_NODES} worker(s), read back from the cluster"

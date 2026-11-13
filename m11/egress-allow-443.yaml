@@ -1,0 +1,24 @@
+# labs/m11/egress-allow-443.yaml — the same Pods may also open TCP 443 anywhere
+#
+# NetworkPolicies are additive allow-lists: a connection is allowed when ANY
+# policy selecting the Pod allows it. Applied beside sandbox-egress-deny, this
+# re-opens exactly one thing, TCP 443, and the `outbound` probe re-run then
+# succeeds while every other port stays closed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-egress-allow-443
+  namespace: agent-probes
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: m11-probes
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

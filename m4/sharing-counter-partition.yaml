@@ -1,0 +1,33 @@
+# Part 5, the deliberate failure — a partition of the SAME parent, index 6. The attribute
+# `partition` is published on partition devices only. The whole-device entry already consumed the
+# counter set, so no partition of index 6 can be allocated and this claim stays unallocated.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: counter-partition
+  namespace: m4-sharing
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator-class
+        selectors:
+        - cel:
+            expression: "device.attributes['sim-accelerator.example.com'].index == 6 && 'partition' in device.attributes['sim-accelerator.example.com']"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: counter-b
+  namespace: m4-sharing
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: counter-partition
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

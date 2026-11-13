@@ -1,0 +1,38 @@
+# labs/m11/latency-sandbox.yaml — one cold Sandbox create, timed from its own object
+#
+# The lab applies this five times, one after another, each deleted before the
+# next, renaming it latency-1 ... latency-5 with sed on the way in:
+#
+#   sed "s/name: latency-1$/name: latency-$i/" m11/latency-sandbox.yaml | kubectl apply -f -
+#
+# Applied as it stands, it is latency-1. The template is the same as
+# probe-sandbox.yaml's apart from the name and the labels: no part-of label, so
+# the egress policies never select these, and no name label, so nothing else
+# keys off them.
+#
+# The instrument is the object itself: the Ready condition's
+# lastTransitionTime minus metadata.creationTimestamp, at second resolution.
+# Agent Sandbox v1.0.5 has no creation-latency metric. Nothing in any checks
+# file reads the seconds.
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: latency-1
+  namespace: agent-probes
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/component: latency-run
+    spec:
+      runtimeClassName: runsc
+      containers:
+        - name: agent
+          image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

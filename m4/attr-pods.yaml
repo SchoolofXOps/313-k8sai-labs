@@ -1,0 +1,35 @@
+# Part 3 — two Pods that each get a claim from a template. Each container prints its environment
+# at start, so the device the driver injected can be read from inside the container.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: attr-root-80
+  namespace: m4-attr
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimTemplateName: sim-device-on-root-80
+  containers:
+  - name: workload
+    image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "env; sleep 3600"]
+    resources:
+      claims:
+      - name: sim-device
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: attr-first-available
+  namespace: m4-attr
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimTemplateName: sim-device-first-available
+  containers:
+  - name: workload
+    image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "env; sleep 3600"]
+    resources:
+      claims:
+      - name: sim-device

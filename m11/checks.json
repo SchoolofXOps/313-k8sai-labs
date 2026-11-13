@@ -1,0 +1,138 @@
+{
+  "_why": [
+    "Module 11 lab checks (labs/m11/checks.json), REAL. Every entry reads OBJECT STATE or a file the learner committed, at the lab's end state: after \"Commit the agents layer\" and before \"Teardown\".",
+    "Every kubectl names KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" and --context kind-grid-sandbox, so a check can never read another cluster.",
+    "Values are captured into a variable or folded by jq and printed as one token; nothing uses grep -q under pipefail. Every matches is anchored, and none can match an empty read.",
+    "No entry reads a latency, a throughput or any other performance figure (TRUST-06). The allocation-latency record is checked for its environment block and its five rows, never for its values.",
+    "A pass here proves configuration and identity, never isolation: a capability differential is not proof of isolation."
+  ],
+  "truth_contract": "REAL",
+  "checks": [
+    {
+      "id": "agents-group-serves-only-sandboxes",
+      "describe": "the install fence: across agents.x-k8s.io and extensions.agents.x-k8s.io the cluster holds exactly one CRD, the Sandbox CRD. Folded by jq into one line, so a second CRD or an extensions CRD changes the line and an unreadable list prints nothing",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox get crd -o json | jq -r '[.items[] | select(.spec.group == \"agents.x-k8s.io\" or .spec.group == \"extensions.agents.x-k8s.io\") | .spec.group + \"/\" + .metadata.name] | join(\" \") + \" \"'",
+      "assert": {
+        "matches": "^agents\\.x-k8s\\.io/sandboxes\\.agents\\.x-k8s\\.io $"
+      }
+    },
+    {
+      "id": "no-extensions-crds",
+      "describe": "no CRD in extensions.agents.x-k8s.io exists: the warm-pool and claim kinds are read as a manifest only and were never installed. An empty CRD list prints crds=unread rather than a vacuous zero",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox get crd -o json | jq -r 'if (.items | length) == 0 then \"crds=unread\" else \"extensions=\" + ([.items[] | select(.spec.group == \"extensions.agents.x-k8s.io\")] | length | tostring) end'",
+      "assert": {
+        "matches": "^extensions=0$"
+      }
+    },
+    {
+      "id": "sandbox-kernel-is-gvisor",
+      "describe": "the kernel identity read from INSIDE probe-sandbox (container agent) is gVisor's. This is an identity assertion, never a security one: a Running phase is not evidence, because a Pod on the default runtime (any Pod with no runtimeClassName) looks the same from outside",
+      "weight": 3,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes exec probe-sandbox -c agent -- cat /proc/version",
+      "assert": {
+        "matches": "^Linux version 4\\.19\\.0-gvisor "
+      }
+    },
+    {
+      "id": "control-plane-default-handler",
+      "describe": "the RuntimeClass is per Pod: probe-sandbox's Pod names runsc, while the kube-proxy Pod on the same node (the Sandbox's status.nodeName) names none and runs under the default handler. No kube-proxy Pod found prints none",
+      "weight": 2,
+      "run": "n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get sandbox probe-sandbox -o jsonpath='{.status.nodeName}'); s=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get pod probe-sandbox -o jsonpath='{.spec.runtimeClassName}'); k=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n kube-system get pods -l k8s-app=kube-proxy --field-selector \"spec.nodeName=$n\" -o json | jq -r '.items | if length == 0 then \"none\" else (.[0].spec.runtimeClassName // \"default\") end'); printf 'sandbox=%s kube-proxy=%s\\n' \"${s:-default}\" \"${k:-none}\"",
+      "assert": {
+        "matches": "^sandbox=runsc kube-proxy=default$"
+      }
+    },
+    {
+      "id": "controller-image-digest-pinned",
+      "describe": "the running agent-sandbox-controller Pod's imageID carries the controller's recorded index digest. sandbox.yaml names the image by TAG, and the asset's sha256 pins the manifest text, not the image bytes, so the digest is read from the running Pod. If the runtime reports a per-arch manifest digest instead, the live run records which and this entry is re-pinned to it",
+      "weight": 2,
+      "run": "ids=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-sandbox-system get pods -l app=agent-sandbox-controller -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.imageID}{\"\\n\"}{end}{end}'); case \"$ids\" in \"\") echo controller=none ;; *sha256:28a9cbdbfd6ac0a4e5c7e9261ace1aa30ee2da681cb640dccdfed98e8dd9d98b*) echo controller=pinned ;; *) echo \"controller=other $ids\" ;; esac",
+      "assert": {
+        "matches": "^controller=pinned$"
+      }
+    },
+    {
+      "id": "podcert-apis-served",
+      "describe": "certificates.k8s.io serves podcertificaterequests and clustertrustbundles: object-level evidence that both APIs are on in Kubernetes 1.37. Issuance is not run, because no built-in Pod Certificate signer ships at 1.37",
+      "weight": 1,
+      "run": "r=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox api-resources --api-group=certificates.k8s.io -o name); case \"$r\" in *podcertificaterequests.certificates.k8s.io*) p=served ;; *) p=absent ;; esac; case \"$r\" in *clustertrustbundles.certificates.k8s.io*) c=served ;; *) c=absent ;; esac; printf 'podcertificaterequests=%s clustertrustbundles=%s\\n' \"$p\" \"$c\"",
+      "assert": {
+        "matches": "^podcertificaterequests=served clustertrustbundles=served$"
+      }
+    },
+    {
+      "id": "mcp-reader-cannot-mutate",
+      "describe": "the tool server's identity, system:serviceaccount:agent-mcp:mcp-reader, may list Pods in agent-target and may not create ConfigMaps there. Asked of the API server's own authorizer with kubectl auth can-i; an unreadable answer prints an empty field and fails",
+      "weight": 2,
+      "run": "l=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox auth can-i list pods -n agent-target --as=system:serviceaccount:agent-mcp:mcp-reader 2>/dev/null); c=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox auth can-i create configmaps -n agent-target --as=system:serviceaccount:agent-mcp:mcp-reader 2>/dev/null); printf 'list=%s create=%s\\n' \"$l\" \"$c\"",
+      "assert": {
+        "matches": "^list=yes create=no$"
+      }
+    },
+    {
+      "id": "actor-direct-change-denied-in-audit",
+      "describe": "the API server's audit log holds at least one non-read request on ConfigMap target-settings in agent-target by system:serviceaccount:agent-actor:actor, answered 403. Filtered by the authenticated user as well as the object, because a namespace deletion fills the namespace with controller events. Counted by jq, so zero events prints denied=0 and fails",
+      "weight": 3,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n kube-system logs kube-apiserver-grid-sandbox-control-plane | jq -Rnr '[inputs | fromjson? | select(type == \"object\" and .kind == \"Event\") | select(.objectRef.namespace == \"agent-target\" and .objectRef.resource == \"configmaps\" and .objectRef.name == \"target-settings\") | select(.user.username == \"system:serviceaccount:agent-actor:actor\") | select(.verb != \"get\" and .verb != \"list\" and .verb != \"watch\") | select(.responseStatus.code == 403) | .auditID] | unique | \"denied=\" + (length | tostring)'",
+      "assert": {
+        "matches": "^denied=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "human-apply-attributed-in-audit",
+      "describe": "the audit log holds at least one patch or update on target-settings in agent-target answered 200, by the username kubectl auth whoami prints for the learner. The username is read, never assumed, and a ServiceAccount username fails the anchored pattern",
+      "weight": 3,
+      "run": "u=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox auth whoami -o jsonpath='{.status.userInfo.username}'); n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n kube-system logs kube-apiserver-grid-sandbox-control-plane | jq -Rn --arg u \"$u\" '[inputs | fromjson? | select(type == \"object\" and .kind == \"Event\") | select(.objectRef.namespace == \"agent-target\" and .objectRef.resource == \"configmaps\" and .objectRef.name == \"target-settings\") | select(.user.username == $u) | select(.verb == \"patch\" or .verb == \"update\") | select(.responseStatus.code == 200) | .auditID] | unique | length'); printf 'human=%s applied=%s\\n' \"${u:-unread}\" \"${n:-0}\"",
+      "assert": {
+        "matches": "^human=(?!system:serviceaccount:)\\S+ applied=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "egress-policy-present",
+      "describe": "both egress NetworkPolicies exist in agent-probes, each with Egress in policyTypes. Object presence only: whether kindnet enforced them for a runsc Pod is read in the lab by the outbound re-runs and recorded in the probe matrix, never asserted here",
+      "weight": 1,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get networkpolicy -o json | jq -r '[.items[] | select((.spec.policyTypes // []) | index(\"Egress\")) | .metadata.name] as $n | \"deny=\" + (if ($n | index(\"sandbox-egress-deny\")) then \"present\" else \"absent\" end) + \" allow=\" + (if ($n | index(\"sandbox-egress-allow-443\")) then \"present\" else \"absent\" end)'",
+      "assert": {
+        "matches": "^deny=present allow=present$"
+      }
+    },
+    {
+      "id": "probe-matrix-both-columns",
+      "describe": "grid-platform/agents/probe-matrix.md holds the probe table: eight data rows under the fixed header, both result cells non-empty and not missing, and the Same outcome? cell yes or no. A missing file or header prints rows=0",
+      "weight": 2,
+      "run": "f=grid-platform/agents/probe-matrix.md; [ -f \"$f\" ] || { echo rows=0 empty=missing-file; exit 0; }; awk -F'|' 'function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} /^\\| Probe \\| Sandboxed \\(runsc\\) \\| Plain Pod \\(runc\\) \\| Same outcome\\? \\|/{h=1;next} h&&/^\\|[-| ]+\\|$/{next} h&&/^\\|/{r++; a=t($3); b=t($4); c=t($5); if(a==\"\"||b==\"\"||a==\"missing\"||b==\"missing\"||(c!=\"yes\"&&c!=\"no\"))e++; next} h&&!/^\\|/{h=0} END{printf \"rows=%d empty=%d\\n\", r, e}' \"$f\"",
+      "assert": {
+        "matches": "^rows=8 empty=0$"
+      }
+    },
+    {
+      "id": "latency-record-has-environment",
+      "describe": "grid-platform/agents/allocation-latency.md carries its declared environment (the six keys, each with a value) and five run rows whose Seconds cell is an integer. The VALUE is never asserted: a figure is a measurement in one declared environment, not a portable claim (TRUST-06)",
+      "weight": 2,
+      "run": "f=grid-platform/agents/allocation-latency.md; [ -f \"$f\" ] || { echo env=0 runs=missing-file; exit 0; }; awk -F'|' 'BEGIN{split(\"Host:|Container runtime VM:|Kubernetes:|gVisor:|Agent Sandbox:|Node image:\",k,\"|\")} {for(i in k){p=k[i]; if(index($0,p)==1 && length($0)>length(p)+1 && !(p in seen)){seen[p]=1; env++}}} /^\\| Run \\| Sandbox \\| creationTimestamp \\| Ready lastTransitionTime \\| Seconds \\|/{h=1;next} h&&/^\\|[-| ]+\\|$/{next} h&&/^\\|/{s=$6; gsub(/[ \\t]/,\"\",s); if(s ~ /^[0-9]+$/) runs++; next} h&&!/^\\|/{h=0} END{printf \"env=%d runs=%d\\n\", env, runs}' \"$f\"",
+      "assert": {
+        "matches": "^env=6 runs=5$"
+      }
+    },
+    {
+      "id": "autonomy-policy-three-decisions",
+      "describe": "grid-platform/docs/autonomy-policy.md holds the policy table: every Decision cell is one of autonomous, approval-gated or never delegated, and all three occur, over at least three rows",
+      "weight": 2,
+      "run": "f=grid-platform/docs/autonomy-policy.md; [ -f \"$f\" ] || { echo rows=0 bad=missing-file kinds=0; exit 0; }; awk -F'|' 'function t(s){gsub(/^[ \\t`*]+|[ \\t`*]+$/,\"\",s);return s} /^\\| Action class \\| Reversibility \\| Blast radius \\| Decision \\|/{h=1;next} h&&/^\\|[-| ]+\\|$/{next} h&&/^\\|/{r++; d=t($5); if(d==\"autonomous\"||d==\"approval-gated\"||d==\"never delegated\"){if(!(d in s)){s[d]=1;k++}} else b++; next} h&&!/^\\|/{h=0} END{printf \"rows=%d bad=%d kinds=%d\\n\", r, b, k}' \"$f\"",
+      "assert": {
+        "matches": "^rows=([3-9]|[1-9][0-9]+) bad=0 kinds=3$"
+      }
+    },
+    {
+      "id": "grid-sandbox-wrappers-exec-single-source",
+      "describe": "the three grid-sandbox wrappers in the learner's repository, with comment lines stripped, each exec the single-source profile script of the same name: wrappers, not copies, so the profile has one authority",
+      "weight": 1,
+      "run": "o=\"\"; for n in create verify teardown; do c=$(grep -v '^[[:space:]]*#' \"grid-platform/clusters/grid-sandbox/$n.sh\" 2>/dev/null | grep -F \"/clusters/grid-sandbox/$n.sh\" | grep -c '^exec '); if [ \"$c\" = \"1\" ]; then s=exec; else s=missing; fi; o=\"$o $n=$s\"; done; echo \"${o# }\"",
+      "assert": {
+        "matches": "^create=exec verify=exec teardown=exec$"
+      }
+    }
+  ]
+}

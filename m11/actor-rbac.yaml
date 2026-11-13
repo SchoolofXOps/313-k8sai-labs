@@ -1,0 +1,65 @@
+# labs/m11/actor-rbac.yaml — the actor's identity: read the target, propose, nothing else
+#
+# ServiceAccount actor lives in agent-actor, where the actor Pod runs.
+#   Role actor-read    in agent-target  get, list     configmaps
+#   Role actor-propose in agent-actor   create, get   configmaps
+# The only write verb this identity holds is `create` on ConfigMaps in its own
+# namespace, which is where its proposals go. It cannot update, patch or
+# delete anything anywhere, and it cannot write to agent-target at all.
+#
+# `create` cannot be narrowed by resourceNames in RBAC, so the narrowing is the
+# namespace: agent-actor holds the actor's own proposals and its code, and
+# nothing a tenant depends on.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: actor
+  namespace: agent-actor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: actor-read
+  namespace: agent-target
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: actor-read
+  namespace: agent-target
+subjects:
+  - kind: ServiceAccount
+    name: actor
+    namespace: agent-actor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: actor-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: actor-propose
+  namespace: agent-actor
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: actor-propose
+  namespace: agent-actor
+subjects:
+  - kind: ServiceAccount
+    name: actor
+    namespace: agent-actor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: actor-propose

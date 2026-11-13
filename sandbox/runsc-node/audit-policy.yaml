@@ -1,0 +1,39 @@
+# labs/sandbox/runsc-node/audit-policy.yaml — the grid-sandbox API server's audit policy
+#
+# Baked into the node image by the sibling Dockerfile at
+# /etc/kubernetes/policies/audit-policy.yaml, and handed to kube-apiserver by
+# labs/clusters/grid-sandbox/create.sh with --audit-policy-file and
+# --audit-log-path=- (the API server's own stdout, read with `kubectl logs` of
+# the kube-apiserver static Pod). M11 reads its denied-mutation evidence here.
+#
+# METADATA ONLY, so no request or response BODY is ever logged. A Metadata
+# event records who asked, what verb, which object and the response code — the
+# whole of M11's evidence — and nothing that was inside the request. A Request
+# or RequestResponse rule would copy bodies into the log, and a body can be
+# Secret data; a lab teaching least privilege must not build an audit log
+# anyone with log access can read secrets out of.
+#
+# FIRST MATCH WINS. The API server walks these rules top to bottom and the
+# first rule that matches a request decides its level, so the order is part of
+# the policy.
+#
+# NAMES ARE EXACT MATCHES, never globs: `agent-*` would not mean what it looks
+# like. The three namespaces and the two ServiceAccount groups are M11's, and
+# planning/plans/m11-plan.md (plan 05-05) fixes the same names letter for
+# letter. A lab object moved into any other namespace is NOT audited.
+#
+# The last rule logs nothing. Without it every request the cluster serves —
+# kubelets, controllers, leader-election leases — would fall through to the
+# default and fill the API server's log with traffic M11 never reads.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: ["RequestReceived"]
+rules:
+  # Anything touching M11's three namespaces, whoever asks.
+  - level: Metadata
+    namespaces: ["agent-mcp", "agent-actor", "agent-target"]
+  # Anything M11's two ServiceAccount groups ask, in any namespace.
+  - level: Metadata
+    userGroups: ["system:serviceaccounts:agent-mcp", "system:serviceaccounts:agent-actor"]
+  # Everything else: not logged.
+  - level: None
