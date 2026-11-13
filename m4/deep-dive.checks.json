@@ -1,0 +1,32 @@
+{
+  "_why": "M4 deep dive end state, read after section 4 and before the deep dive's Teardown. SIMULATED: the devices are synthetic, published by the upstream example driver. Object state only: the claim's driver-written device status, the DeviceTaintRule's condition and the evicted Pod's absence, and the driver DaemonSet's env. State-tolerant: every object read is one the deep dive itself seeds in m4-deepdive or the addon layer it recreates, never an object of the lab. Every kubectl sets KUBECONFIG and --context kind-grid-core. matches are anchored, with no lookaround and no backreference. Run it from the labs repo root: (cd labs && node ../scripts/run-checks.mjs m4/deep-dive.checks.json).",
+  "truth_contract": "SIMULATED",
+  "checks": [
+    {
+      "id": "dd-claim-device-status-written",
+      "describe": "section 3: claim dd-status-claim, made while the driver ran with GPU_DEVICE_STATUS=true, carries at least one status.devices entry written by the renamed driver. An absent claim prints nothing and fails",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-deepdive get resourceclaim dd-status-claim -o json | jq -r 'if ([.status.devices[]? | select(.driver == \"sim-accelerator.example.com\")] | length) > 0 then \"devices-status=written\" else \"devices-status=empty\" end'",
+      "assert": {
+        "matches": "^devices-status=written$"
+      }
+    },
+    {
+      "id": "dd-noexecute-rule-evicted",
+      "describe": "section 4: DeviceTaintRule sim-evict-demo exists, its EvictionInProgress condition reads False (the eviction it caused has finished), and Pod taint-victim is gone",
+      "weight": 2,
+      "run": "sh -c 'export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; r=$(kubectl --context kind-grid-core get devicetaintrule sim-evict-demo -o json 2>/dev/null | jq -r \"if .metadata.name == \\\"sim-evict-demo\\\" then \\\"present \\\" + ([.status.conditions[]? | select(.type == \\\"EvictionInProgress\\\") | .status][0] // \\\"unset\\\") else \\\"absent\\\" end\"); set -- $r; rule=\"${1:-absent}\"; case \"${2:-}\" in False) ev=done;; \"\") ev=unknown;; *) ev=\"$2\";; esac; v=$(kubectl --context kind-grid-core -n m4-deepdive get pod taint-victim --ignore-not-found -o name); if [ -z \"$v\" ]; then vic=absent; else vic=present; fi; echo \"rule=$rule eviction=$ev victim=$vic\"'",
+      "assert": {
+        "matches": "^rule=present eviction=done victim=absent$"
+      }
+    },
+    {
+      "id": "dd-driver-env-restored",
+      "describe": "section 3 restored: the driver DaemonSet template carries GPU_DEVICE_STATUS=\"false\" again after rollout undo",
+      "run": "sh -c 'printf \"GPU_DEVICE_STATUS=%s\\n\" \"$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver get ds dra-example-driver-kubeletplugin -o jsonpath=\"{.spec.template.spec.containers[?(@.name==\\\"plugin\\\")].env[?(@.name==\\\"GPU_DEVICE_STATUS\\\")].value}\")\"'",
+      "assert": {
+        "matches": "^GPU_DEVICE_STATUS=false$"
+      }
+    }
+  ]
+}

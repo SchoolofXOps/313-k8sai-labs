@@ -1,0 +1,38 @@
+# labs/m11/mcp-rbac.yaml — the tool server's identity, and the only verbs it holds
+#
+# ServiceAccount mcp-reader lives in agent-mcp, where the tool server runs.
+# Role mcp-read lives in agent-target, the namespace the tools act on, and
+# grants get and list on pods and configmaps. Nothing else: no create, no
+# update, no patch, no delete, no other resource and no other namespace.
+#
+# Both namespaces are audited, and every request this identity makes is also
+# audited by the policy's group rule (system:serviceaccounts:agent-mcp).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-reader
+  namespace: agent-mcp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-read
+  namespace: agent-target
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-reader-read
+  namespace: agent-target
+subjects:
+  - kind: ServiceAccount
+    name: mcp-reader
+    namespace: agent-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-read

@@ -1,0 +1,30 @@
+# Module 4 lab namespaces, one per part. Teardown deletes all six.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-count
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-lifecycle
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-attr
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-bridge
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-sharing
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-health

@@ -1,0 +1,110 @@
+{
+  "_why": [
+    "Module 3 lab checks (labs/m3/checks.json), REAL. Run at the lab's end state: after \"Commit the design documents\" and before \"Teardown\", so the cluster still exists for the first check.",
+    "The first check reads object state from the cluster; every kubectl sets KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" and --context kind-grid-core itself. The rest read the three documents the learner wrote, by section and by cell content, never by heading alone; an absent file or section prints a zero count and fails its anchored match.",
+    "Paths are relative to the learner tree (the labs repo root). In src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m3/checks.json).",
+    "The operator-category MUST is named by its course label, ai-operator, never by its upstream id (research Pitfall 1). A pass here proves what the learner recorded, never that the cluster or the platform is conformant."
+  ],
+  "truth_contract": "REAL",
+  "checks": [
+    {
+      "id": "dra-api-served-no-slices",
+      "describe": "the cluster serves resourceslices.resource.k8s.io and holds zero ResourceSlices: the DRA API is there and no driver publishes a device, the headline gap. An unreachable cluster prints served=unread",
+      "weight": 2,
+      "run": "r=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core api-resources --api-group=resource.k8s.io -o name 2>/dev/null); [ -n \"$r\" ] || { echo 'served=unread slices=unread'; exit 0; }; n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o name 2>/dev/null | grep -c '^resourceslice'); case \"$r\" in *resourceslices.resource.k8s.io*) a=yes;; *) a=no;; esac; printf 'served=%s slices=%s\\n' \"$a\" \"${n:-0}\"",
+      "assert": {
+        "matches": "^served=yes slices=0$"
+      }
+    },
+    {
+      "id": "kar-report-fifteen-items",
+      "describe": "grid-platform/docs/kar-gap-report.md, section ## Requirements: 15 data rows whose Item cells are the 15 course labels, each exactly once. An absent file or section prints items=0",
+      "weight": 2,
+      "run": "f=grid-platform/docs/kar-gap-report.md; [ -f \"$f\" ] || { echo 'items=0 distinct=0 unknown=missing-file'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} BEGIN{n=split(\"accelerator-driver-runtime accelerator-sharing virtualized-accelerator inference-gateway inference-extension-routing high-performance-networking disaggregated-inference gang-scheduling cluster-autoscaling pod-autoscaling accelerator-metrics ai-service-metrics secure-accelerator-access workload-sandboxing ai-operator\",L,\" \"); for(i=1;i<=n;i++) ok[L[i]]=1} /^## Requirements[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Item *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{c++; x=t($2); if(x in ok){if(!(x in seen)){seen[x]=1;d++}} else u++} END{printf \"items=%d distinct=%d unknown=%d\\n\", c, d, u}' \"$f\"",
+      "assert": {
+        "matches": "^items=15 distinct=15 unknown=0$"
+      }
+    },
+    {
+      "id": "kar-report-verdict-vocabulary",
+      "describe": "grid-platform/docs/kar-gap-report.md, section ## Requirements: every Verdict cell is exactly one of verifiable here, not verifiable on this cluster, not applicable, bare. An absent file prints rows=0",
+      "weight": 1,
+      "run": "f=grid-platform/docs/kar-gap-report.md; [ -f \"$f\" ] || { echo 'rows=0 bad=missing-file'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} /^## Requirements[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Item *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{r++; v=w($5); if(v!=\"verifiable here\"&&v!=\"not verifiable on this cluster\"&&v!=\"not applicable\") b++} END{printf \"rows=%d bad=%d\\n\", r, b}' \"$f\"",
+      "assert": {
+        "matches": "^rows=15 bad=0$"
+      }
+    },
+    {
+      "id": "kar-report-headline-gap",
+      "describe": "grid-platform/docs/kar-gap-report.md, section ## Headline: the headline gap sentence, matched as a fixed string on one line",
+      "weight": 1,
+      "run": "f=grid-platform/docs/kar-gap-report.md; [ -f \"$f\" ] || { echo 'headline=missing-file'; exit 0; }; awk -v h='resource.k8s.io/v1 is served, but no driver publishes a ResourceSlice: no device can be requested by attribute yet. Module 4 closes this.' '/^## Headline[ \\t]*$/{s=1;next} /^## /{s=0} s{l=$0; sub(/[ \\t]+$/,\"\",l); if(l==h) p=1} END{print (p ? \"headline=present\" : \"headline=absent\")}' \"$f\"",
+      "assert": {
+        "matches": "^headline=present$"
+      }
+    },
+    {
+      "id": "design-doc-three-tenants",
+      "describe": "grid-platform/docs/platform-design.md, section ## Tenants: rows for `research`, `data` and `product` (code spans), each with a non-empty What it runs and Priority",
+      "weight": 2,
+      "run": "f=grid-platform/docs/platform-design.md; [ -f \"$f\" ] || { echo 'tenants=0 file=missing'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} /^## Tenants[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Tenant *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{x=w($2); if((x==\"`research`\"||x==\"`data`\"||x==\"`product`\") && w($3)!=\"\" && w($4)!=\"\" && !(x in seen)){seen[x]=1;n++}} END{printf \"tenants=%d\\n\", n}' \"$f\"",
+      "assert": {
+        "matches": "^tenants=3$"
+      }
+    },
+    {
+      "id": "design-doc-four-classes",
+      "describe": "grid-platform/docs/platform-design.md, section ## Workload classes: rows whose first cell is exactly Data preparation, Training and fine-tuning, Inference and Agents, each with non-empty Tenants and needs",
+      "weight": 2,
+      "run": "f=grid-platform/docs/platform-design.md; [ -f \"$f\" ] || { echo 'classes=0 file=missing'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} /^## Workload classes[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Class *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{x=w($2); if((x==\"Data preparation\"||x==\"Training and fine-tuning\"||x==\"Inference\"||x==\"Agents\") && w($3)!=\"\" && w($4)!=\"\" && !(x in seen)){seen[x]=1;n++}} END{printf \"classes=%d\\n\", n}' \"$f\"",
+      "assert": {
+        "matches": "^classes=4$"
+      }
+    },
+    {
+      "id": "design-doc-owner-per-layer",
+      "describe": "grid-platform/docs/platform-design.md, section ## Architecture by layer: the nine layer directories in code spans as first cells, and each layer's Owner cell carrying at least one code span",
+      "weight": 2,
+      "run": "f=grid-platform/docs/platform-design.md; [ -f \"$f\" ] || { echo 'layers=0 owned=0 file=missing'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} BEGIN{n=split(\"nodes capacity dataplane-storage training serving routing datalayer agents observability\",L,\" \"); for(i=1;i<=n;i++) ok[\"`\" L[i] \"`\"]=1} /^## Architecture by layer[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Layer *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{x=w($2); sub(/\\/`$/,\"`\",x); if(x in ok){if(!(x in seen)){seen[x]=1;l++} if(w($4) ~ /`[^`]+`/ && !(x in own)){own[x]=1;o++}}} END{printf \"layers=%d owned=%d\\n\", l, o}' \"$f\"",
+      "assert": {
+        "matches": "^layers=9 owned=9$"
+      }
+    },
+    {
+      "id": "design-doc-deferred-names-module",
+      "describe": "grid-platform/docs/platform-design.md, section ## Decisions deferred: at least one row, and every row has a Decision and a Deferred to cell that is M4 to M13",
+      "weight": 2,
+      "run": "f=grid-platform/docs/platform-design.md; [ -f \"$f\" ] || { echo 'rows=0 bad=missing-file'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} /^## Decisions deferred[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Decision *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{r++; if(w($2)==\"\" || w($3) !~ /^M([4-9]|1[0-3])$/) b++} END{printf \"rows=%d bad=%d\\n\", r, b}' \"$f\"",
+      "assert": {
+        "matches": "^rows=[1-9][0-9]* bad=0$"
+      }
+    },
+    {
+      "id": "design-doc-cites-m2-models",
+      "describe": "grid-platform/docs/platform-design.md, section ## Capabilities, links capacity-model.md and cost-model.md by relative path, and both of Module 2's files are present in grid-platform/docs/",
+      "weight": 1,
+      "run": "f=grid-platform/docs/platform-design.md; d=grid-platform/docs; if [ -f \"$f\" ]; then l=$(awk '/^## Capabilities[ \\t]*$/{s=1;next} /^## /{s=0} s&&/\\]\\((\\.\\/)?capacity-model\\.md\\)/{c=1} s&&/\\]\\((\\.\\/)?cost-model\\.md\\)/{k=1} END{printf \"%s %s\", (c?\"linked\":\"unlinked\"), (k?\"linked\":\"unlinked\")}' \"$f\"); else l='unread unread'; fi; set -- $l; [ -f \"$d/capacity-model.md\" ] && p1=present || p1=absent; [ -f \"$d/cost-model.md\" ] && p2=present || p2=absent; printf 'capacity=%s,%s cost=%s,%s\\n' \"$1\" \"$p1\" \"$2\" \"$p2\"",
+      "assert": {
+        "matches": "^capacity=linked,present cost=linked,present$"
+      }
+    },
+    {
+      "id": "grading-rows-three-axes",
+      "describe": "grid-platform/docs/landscape-grading.md, section ## My grading: at least six rows, each with an Entry and with Maturity, Recommendation and Evidence grade cells each a bare word from its vocabulary",
+      "weight": 2,
+      "run": "f=grid-platform/docs/landscape-grading.md; [ -f \"$f\" ] || { echo 'rows=0 bad=missing-file'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} /^## My grading[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Entry *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{r++; m=w($3); c=w($4); e=w($5); if(w($2)==\"\") b++; if(m!=\"shipped-and-stable\"&&m!=\"shipped-and-immature\"&&m!=\"announced-or-roadmap\") b++; if(c!=\"bet-on-it\"&&c!=\"pilot-it\"&&c!=\"read-it-fluently\") b++; if(e!=\"verified\"&&e!=\"cited\"&&e!=\"unverified\") b++} END{printf \"rows=%d bad=%d\\n\", r, b}' \"$f\"",
+      "assert": {
+        "matches": "^rows=([6-9]|[1-9][0-9]+) bad=0$"
+      }
+    },
+    {
+      "id": "grading-rows-dated-source",
+      "describe": "grid-platform/docs/landscape-grading.md, section ## My grading: every row has an https:// URL in Source and a YYYY-MM-DD date in Read on",
+      "weight": 1,
+      "run": "f=grid-platform/docs/landscape-grading.md; [ -f \"$f\" ] || { echo 'rows=0 undated=missing-file'; exit 0; }; awk -F'|' 'function w(s){gsub(/^[ \\t]+|[ \\t]+$/,\"\",s);return s} function t(s){gsub(/^[ \\t`]+|[ \\t`]+$/,\"\",s);return s} /^## My grading[ \\t]*$/{s=1;next} /^## /{s=0} s&&/^\\| *Entry *\\|/{next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&/^\\|/{r++; if(w($6) !~ /^https:\\/\\/[^ ]+$/ || w($7) !~ /^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) u++} END{printf \"rows=%d undated=%d\\n\", r, u}' \"$f\"",
+      "assert": {
+        "matches": "^rows=([6-9]|[1-9][0-9]+) undated=0$"
+      }
+    }
+  ]
+}

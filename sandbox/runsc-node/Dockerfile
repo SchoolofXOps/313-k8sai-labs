@@ -23,6 +23,8 @@
 #                                             kept RELATIVE to runsc as shipped
 #   /etc/containerd/runsc.toml                runsc_config (platform)
 #   /etc/containerd/config.toml               APPENDED: the runsc handler
+#   /etc/kubernetes/policies/audit-policy.yaml  the API server's audit policy
+#                                             (plan 05-04; see the last layer)
 #
 # The containerd runtime handler registered here is named exactly `runsc`, and
 # labs/sandbox/runsc-node/runtimeclass.yaml sets `handler: runsc` to match. A
@@ -184,3 +186,20 @@ RUN set -eux; \
       '    ConfigPath = "/etc/containerd/runsc.toml"' \
       >> /etc/containerd/config.toml; \
     tail -n 12 /etc/containerd/config.toml
+
+# The grid-sandbox API server's audit policy (plan 05-04, CONTEXT D-30). M11
+# reads its denied-mutation evidence from the API server's own audit log, and
+# labs/clusters/grid-sandbox/create.sh's kubeadm patch points
+# --audit-policy-file at exactly this path, with a hostPath extraVolume of
+# pathType File that mounts it into the kube-apiserver static Pod.
+#
+# BAKED, NOT MOUNTED, and the reason is where a mount resolves. A kind
+# `extraMounts` hostPath is resolved by dockerd inside the Rancher Desktop VM,
+# and that VM shares only the user's HOME directory. A clone (or a learner-QA
+# scratch tree) anywhere else gives dockerd a path it cannot see, so it creates
+# an empty DIRECTORY there instead — and the API server, finding a directory
+# where its policy file should be, never starts. Copying the file into the
+# image this profile is created FROM removes the host path from the question.
+# create.sh asserts the file is in the image before `kind create`, so an image
+# built before this layer existed fails loudly with the rebuild command named.
+COPY audit-policy.yaml /etc/kubernetes/policies/audit-policy.yaml

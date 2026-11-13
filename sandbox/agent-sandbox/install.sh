@@ -161,7 +161,40 @@ echo "==> applying $(basename "${MANIFEST}") (sha256 verified)"
 kc apply --server-side --force-conflicts -f "${MANIFEST}"
 
 echo "==> waiting for the Sandbox CRD to be Established"
-kc wait --for=condition=Established crd/sandboxes.agents.x-k8s.io --timeout=120s
+# A CRD the API server has only just created can still have a null
+# status.conditions, and kubectl does not wait in that case: it fails at once
+# with ".status.conditions accessor error: <nil> is of the type <nil>". Under
+# `set -e` that one transient read used to end this script before the rollout
+# wait (1 run in 5 in Phase 5, planning/lab-tests/m11.md). Only THAT error is
+# retried, 2 s apart, at most CRD_WAIT_ATTEMPTS times; any other failure --
+# kubectl's own --timeout included, which has already waited its full 120 s --
+# fails at once, so a real problem is never hidden behind a retry.
+CRD_WAIT_ATTEMPTS=10
+crd_attempt=1
+while :; do
+  if crd_wait_out="$(kc wait --for=condition=Established crd/sandboxes.agents.x-k8s.io --timeout=120s 2>&1)"; then
+    printf '%s\n' "${crd_wait_out}"
+    break
+  fi
+  printf '%s\n' "${crd_wait_out}" >&2
+  case "${crd_wait_out}" in
+    *".status.conditions accessor error"*)
+      if [ "${crd_attempt}" -ge "${CRD_WAIT_ATTEMPTS}" ]; then
+        echo "FAIL: the Sandbox CRD still had no status conditions after ${CRD_WAIT_ATTEMPTS} attempts, 2 s apart." >&2
+        echo "      Inspect: kubectl --context ${CONTEXT} get crd sandboxes.agents.x-k8s.io -o yaml" >&2
+        exit 1
+      fi
+      echo "  the new CRD has no status conditions yet; asking again in 2 s (attempt ${crd_attempt} of ${CRD_WAIT_ATTEMPTS})"
+      sleep 2
+      crd_attempt=$(( crd_attempt + 1 ))
+      ;;
+    *)
+      echo "FAIL: the Sandbox CRD did not become Established." >&2
+      echo "      Inspect: kubectl --context ${CONTEXT} get crd sandboxes.agents.x-k8s.io -o yaml" >&2
+      exit 1
+      ;;
+  esac
+done
 
 echo "==> waiting for the controller rollout"
 if ! kc -n "${NAMESPACE}" rollout status "deploy/${DEPLOYMENT}" --timeout=180s; then

@@ -1,0 +1,16 @@
+# Part 2 — the device readiness gate. A DeviceTaintRule at resource.k8s.io/v1 (served at 1.37)
+# taints every device the driver publishes in the worker's pool. NoSchedule blocks NEW
+# allocations only; a claim that is already allocated keeps its device.
+# The selector supports exactly driver, pool and device.
+apiVersion: resource.k8s.io/v1
+kind: DeviceTaintRule
+metadata:
+  name: sim-driver-not-ready
+spec:
+  deviceSelector:
+    driver: sim-accelerator.example.com
+    pool: grid-core-worker
+  taint:
+    key: sim-accelerator.example.com/driver-not-ready
+    value: "true"
+    effect: NoSchedule

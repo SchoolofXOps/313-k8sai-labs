@@ -1,0 +1,32 @@
+# Part 3 — the deliberate failure. The same 100Gi selector that was skipped quietly as a preferred
+# alternative is now the only request, so no device satisfies the claim and the Pod stays Pending.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: sim-device-100gi
+  namespace: m4-attr
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator-class
+        selectors:
+        - cel:
+            expression: "device.capacity['sim-accelerator.example.com'].memory.compareTo(quantity('100Gi')) >= 0"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: attr-unsatisfiable
+  namespace: m4-attr
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: sim-device-100gi
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

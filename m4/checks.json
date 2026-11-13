@@ -1,0 +1,136 @@
+{
+  "_why": "M4 lab end state, read after \"Commit the node layer\" and before \"Teardown\". SIMULATED: the control plane, the kubelet, the DaemonSet rollout and the claim lifecycle are real; every device is a synthetic device published by the upstream example driver. Object state only (D-17, TRUST-06): claim allocation, ResourceSlice, Pod condition, the KEP-4680 health field, the DaemonSet revision and the learner's Grid files. No Pod phase is asserted alone and no number is read as performance. Every kubectl sets KUBECONFIG and --context kind-grid-core itself. Every matches is anchored and in JavaScript regex dialect. The vendor resource name of part 4 appears nowhere in this file (STANDARDS.md C23); the bridge is asserted through the Pod's extendedResourceClaimStatus and the claim it names. Paths are relative to the learner tree (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m4/checks.json).",
+  "truth_contract": "SIMULATED",
+  "checks": [
+    {
+      "id": "addon-dra-slices-published",
+      "describe": "the worker's ResourceSlices report the renamed driver and 8 synthetic devices, read after the sharing part's rollout undo. Printed from a jq fold, so zero slices prints devices=0 and fails",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o json | jq -r '[.items[] | select(.spec.nodeName == \"grid-core-worker\")] | \"driver=\" + ([.[].spec.driver] | unique | join(\",\")) + \" devices=\" + ([.[].spec.devices // [] | length] | add // 0 | tostring)'",
+      "assert": {
+        "matches": "^driver=sim-accelerator\\.example\\.com devices=8$"
+      }
+    },
+    {
+      "id": "count-extra-request-unschedulable",
+      "describe": "part 1: Pod count-over asked for one more course-named extended resource than the node advertised, and its PodScheduled condition says why — read from the condition, never the phase",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-count get pod count-over -o json | jq -r '.status.conditions[]? | select(.type == \"PodScheduled\") | \"status=\\(.status) reason=\\(.reason) insufficient=\" + (((.message // \"\") | capture(\"Insufficient (?<r>sim-accelerator\\\\.example\\\\.com/device)\") | .r) // \"none\")'",
+      "assert": {
+        "matches": "^status=False reason=Unschedulable insufficient=sim-accelerator\\.example\\.com/device$"
+      }
+    },
+    {
+      "id": "lifecycle-holder-uid-unchanged",
+      "describe": "part 2: the holder Pod that kept its device through the broken driver revision and the rollback is the same Pod — its live UID equals the holder-uid-before line the learner recorded",
+      "weight": 2,
+      "run": "sh -c 'live=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-lifecycle get pod holder -o jsonpath=\"{.metadata.uid}\"); before=$(sed -n \"s/^holder-uid-before:[[:space:]]*//p\" grid-platform/nodes/lifecycle/rollback-record.md 2>/dev/null | head -1); if [ -n \"$live\" ] && [ \"$live\" = \"$before\" ]; then echo uid=unchanged; else echo \"uid=changed live=$live before=$before\"; fi'",
+      "assert": {
+        "matches": "^uid=unchanged$"
+      }
+    },
+    {
+      "id": "lifecycle-holder-restarts-zero",
+      "describe": "part 2: the holder container never restarted across the driver roll and its undo",
+      "run": "sh -c 'printf \"restarts=%s\\n\" \"$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-lifecycle get pod holder -o jsonpath=\"{.status.containerStatuses[0].restartCount}\")\"'",
+      "assert": {
+        "matches": "^restarts=0$"
+      }
+    },
+    {
+      "id": "lifecycle-revision-rolled-back",
+      "describe": "part 2 and part 5: the driver DaemonSet's template is back on the pinned digest, every desired plugin Pod is ready, and its ControllerRevision history holds at least two revisions, which is what a rollout undo reads. A 0/0 DaemonSet cannot satisfy the backreference",
+      "weight": 2,
+      "run": "sh -c 'img=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver get ds dra-example-driver-kubeletplugin -o jsonpath=\"{.spec.template.spec.containers[?(@.name==\\\"plugin\\\")].image}\"); rd=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver get ds dra-example-driver-kubeletplugin -o jsonpath=\"{.status.numberReady}/{.status.desiredNumberScheduled}\"); rv=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver get controllerrevisions -o json | jq \"[.items[] | select(any(.metadata.ownerReferences[]?; .kind == \\\"DaemonSet\\\" and .name == \\\"dra-example-driver-kubeletplugin\\\"))] | length\"); if [ \"$img\" = \"registry.k8s.io/dra-example-driver/dra-example-driver@sha256:c1488eb51e086bd6b885a667c7d059382844e54e5917a71bcf734c04edfbb62f\" ]; then i=pinned; else i=\"$img\"; fi; echo \"image=$i ready=$rd revisions=$rv\"'",
+      "assert": {
+        "matches": "^image=pinned ready=([1-9][0-9]*)/\\1 revisions=([2-9]|[1-9][0-9]+)$"
+      }
+    },
+    {
+      "id": "readiness-rule-served-v1",
+      "describe": "part 2: DeviceTaintRule is served at resource.k8s.io/v1 on this cluster, and the readiness-gate manifest the lab applied is written at that version — never the upstream example's prerelease version",
+      "run": "sh -c 's=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core api-resources --api-group=resource.k8s.io --no-headers | awk \"\\$1 == \\\"devicetaintrules\\\" { print \\$(NF-2) }\"); m=$(sed -n \"s/^apiVersion:[[:space:]]*//p\" m4/readiness-rule.yaml | head -1); echo \"served=$s manifest=$m\"'",
+      "assert": {
+        "matches": "^served=resource\\.k8s\\.io/v1 manifest=resource\\.k8s\\.io/v1$"
+      }
+    },
+    {
+      "id": "attr-claim-allocated-on-root-80",
+      "describe": "part 3: the claim generated for Pod attr-root-80 is allocated, and the device it was allocated reads pcieRoot pci0000:80 in the ResourceSlice — selection by attribute, not by count",
+      "weight": 2,
+      "run": "sh -c 'export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; c=$(kubectl --context kind-grid-core -n m4-attr get pod attr-root-80 -o jsonpath=\"{.status.resourceClaimStatuses[0].resourceClaimName}\"); d=$(kubectl --context kind-grid-core -n m4-attr get resourceclaim \"$c\" -o jsonpath=\"{.status.allocation.devices.results[0].device}\" 2>/dev/null); if [ -z \"$d\" ]; then echo \"allocated=no claim=$c\"; exit 0; fi; r=$(kubectl --context kind-grid-core get resourceslices -o json | jq -r --arg d \"$d\" \"[.items[] | select(.spec.nodeName == \\\"grid-core-worker\\\") | .spec.devices[]? | select(.name == \\$d) | .attributes[\\\"resource.kubernetes.io/pcieRoot\\\"].string] | first // \\\"none\\\"\"); echo \"allocated=yes pcieRoot=$r\"'",
+      "assert": {
+        "matches": "^allocated=yes pcieRoot=pci0000:80$"
+      }
+    },
+    {
+      "id": "attr-firstavailable-subrequest-recorded",
+      "describe": "part 3: the prioritized-alternatives claim records which subrequest was satisfied, in the <request>/<subrequest> form, and it is the fallback because no device satisfies the preferred selector",
+      "weight": 2,
+      "run": "sh -c 'export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; c=$(kubectl --context kind-grid-core -n m4-attr get pod attr-first-available -o jsonpath=\"{.status.resourceClaimStatuses[0].resourceClaimName}\"); printf \"request=%s\\n\" \"$(kubectl --context kind-grid-core -n m4-attr get resourceclaim \"$c\" -o jsonpath=\"{.status.allocation.devices.results[0].request}\" 2>/dev/null)\"'",
+      "assert": {
+        "matches": "^request=sim-device/sim-fallback$"
+      }
+    },
+    {
+      "id": "attr-unsatisfiable-claim-unallocated",
+      "describe": "part 3, the deliberate failure: claim sim-device-100gi exists with no allocation, and its Pod's PodScheduled condition is False. The claim's own name is printed first, so an absent claim cannot read as unallocated",
+      "weight": 2,
+      "run": "sh -c 'a=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-attr get resourceclaim sim-device-100gi -o jsonpath=\"{.metadata.name}/{.status.allocation.devices.results[0].device}\" 2>/dev/null); if [ \"$a\" = \"sim-device-100gi/\" ]; then al=none; else al=\"unexpected:$a\"; fi; s=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-attr get pod attr-unsatisfiable -o jsonpath=\"{.status.conditions[?(@.type==\\\"PodScheduled\\\")].status}\"); echo \"allocation=$al scheduled=$s\"'",
+      "assert": {
+        "matches": "^allocation=none scheduled=False$"
+      }
+    },
+    {
+      "id": "bridge-pod-claim-created",
+      "describe": "part 4: Pod unchanged-manifest carries no resourceClaims in its spec, yet the scheduler created a claim for it, named in status.extendedResourceClaimStatus, and that claim is allocated. The resource name itself is never read here",
+      "weight": 2,
+      "run": "sh -c 'export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; n=$(kubectl --context kind-grid-core -n m4-bridge get pod unchanged-manifest -o json | jq \"(.spec.resourceClaims // []) | length\"); c=$(kubectl --context kind-grid-core -n m4-bridge get pod unchanged-manifest -o jsonpath=\"{.status.extendedResourceClaimStatus.resourceClaimName}\"); if [ -n \"$c\" ] && kubectl --context kind-grid-core -n m4-bridge get resourceclaim \"$c\" >/dev/null 2>&1; then cl=created; else cl=none; fi; d=$(kubectl --context kind-grid-core -n m4-bridge get resourceclaim \"$c\" -o jsonpath=\"{.status.allocation.devices.results[0].device}\" 2>/dev/null); if [ -n \"$d\" ]; then al=yes; else al=no; fi; echo \"spec-claims=$n claim=$cl allocated=$al\"'",
+      "assert": {
+        "matches": "^spec-claims=0 claim=created allocated=yes$"
+      }
+    },
+    {
+      "id": "sharing-shared-claim-two-pods",
+      "describe": "part 5: one ResourceClaim, shared-claim, is reserved for both shared-a and shared-b, and both containers started with the claim's allocated device injected, read from inside each Pod. Run 1 showed reservedFor listing two Pods whose containers never started, so reservedFor alone could not fail on that state. Two Pods on one allocated device is DRA-native sharing and demonstrates no isolation",
+      "weight": 2,
+      "run": "sh -c 'export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; r=$(kubectl --context kind-grid-core -n m4-sharing get resourceclaim shared-claim -o json | jq \"[.status.reservedFor[]? | select(.name == \\\"shared-a\\\" or .name == \\\"shared-b\\\")] | length\"); d=$(kubectl --context kind-grid-core -n m4-sharing get resourceclaim shared-claim -o jsonpath=\"{.status.allocation.devices.results[0].device}\"); a=$(kubectl --context kind-grid-core -n m4-sharing exec shared-a -- sh -c env 2>/dev/null | sed -n \"s/^GPU_DEVICE_[0-9][0-9]*=//p\"); b=$(kubectl --context kind-grid-core -n m4-sharing exec shared-b -- sh -c env 2>/dev/null | sed -n \"s/^GPU_DEVICE_[0-9][0-9]*=//p\"); if [ -n \"$d\" ] && [ \"$a\" = \"$d\" ] && [ \"$b\" = \"$d\" ]; then s=yes; else s=no; fi; echo \"reservedFor=$r same-device=$s\"'",
+      "assert": {
+        "matches": "^reservedFor=2 same-device=yes$"
+      }
+    },
+    {
+      "id": "health-status-healthy-after-probe",
+      "describe": "part 6: after the health probe drove a device Unhealthy and back, Pod health-watch's own KEP-4680 field reports Healthy — object state, never a phase",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-health get pod health-watch -o json | jq -r '\"health=\" + ([.status.containerStatuses[]?.allocatedResourcesStatus[]?.resources[]?.health] | unique | join(\",\"))'",
+      "assert": {
+        "matches": "^health=Healthy$"
+      }
+    },
+    {
+      "id": "rollback-record-uids",
+      "describe": "part 2's record in the learner's repository: all ten keys present, the holder UIDs are UUID-form and equal, and both plugin Pod UIDs recorded",
+      "run": "sh -c 'f=grid-platform/nodes/lifecycle/rollback-record.md; n=0; for k in holder-uid-before holder-uid-after holder-restarts-before holder-restarts-after holder-device-before holder-device-after plugin-pod-uid-before plugin-pod-uid-after slice-generation-before slice-generation-after; do c=$(grep -c \"^$k:\" \"$f\" 2>/dev/null); [ \"$c\" = \"1\" ] && n=$((n+1)); done; hb=$(sed -n \"s/^holder-uid-before:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); ha=$(sed -n \"s/^holder-uid-after:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); pb=$(sed -n \"s/^plugin-pod-uid-before:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); pa=$(sed -n \"s/^plugin-pod-uid-after:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); u=$(printf \"%s\\n\" \"$hb\" | grep -cx \"[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}\"); h=differ; if [ \"$u\" = \"1\" ] && [ \"$hb\" = \"$ha\" ]; then h=equal; fi; p=missing; if [ -n \"$pb\" ] && [ -n \"$pa\" ]; then p=recorded; fi; echo \"keys=$n holder=$h plugin=$p\"'",
+      "assert": {
+        "matches": "^keys=10 holder=equal plugin=recorded$"
+      }
+    },
+    {
+      "id": "xid-classification-three-rows",
+      "describe": "part 6's classification in the learner's repository: under the fixed header, one row each for XID 48, 63 and 79, every cell non-empty",
+      "run": "awk -F'|' 'BEGIN { h = 0; n = 0; x = \"\" } /^\\| XID \\| Evidence \\| Class \\| First action \\|/ { h = 1; next } h && /^\\|[[:space:]]*(48|63|79)[[:space:]]*\\|/ { ok = (NF >= 6); for (i = 2; i <= 5; i++) { c = $i; gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", c); if (c == \"\") ok = 0 } if (ok) { id = $2; gsub(/[[:space:]]/, \"\", id); n++; x = x (x == \"\" ? \"\" : \",\") id } } END { print \"rows=\" n \" xids=\" x }' grid-platform/nodes/health/xid-classification.md",
+      "assert": {
+        "matches": "^rows=3 xids=48,63,79$"
+      }
+    },
+    {
+      "id": "addon-dra-wrappers-exec-single-source",
+      "describe": "the three addon-dra wrappers in the learner's repository, with comment lines stripped, each exec the single-source addon script of the same name — wrappers, not copies, so the driver pin has one authority",
+      "run": "sh -c 'o=\"\"; for n in create verify teardown; do c=$(grep -v \"^[[:space:]]*#\" \"grid-platform/clusters/addon-dra/$n.sh\" 2>/dev/null | grep -F \"/clusters/grid-core/addons/dra/$n.sh\" | grep -c \"^exec \"); if [ \"$c\" = \"1\" ]; then s=exec; else s=missing; fi; o=\"$o $n=$s\"; done; echo \"${o# }\"'",
+      "assert": {
+        "matches": "^create=exec verify=exec teardown=exec$"
+      }
+    }
+  ]
+}

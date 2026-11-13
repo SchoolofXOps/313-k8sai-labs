@@ -1,0 +1,21 @@
+# Part 3 — prioritized alternatives. The scheduler tries sim-preferred first, and takes
+# sim-fallback only if no device satisfies it. No device here carries 100Gi of the driver's
+# memory capacity, so the allocation result records the request as sim-device/sim-fallback.
+# No metadata.namespace: apply it into the namespace that uses it.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: sim-device-first-available
+spec:
+  spec:
+    devices:
+      requests:
+      - name: sim-device
+        firstAvailable:
+        - name: sim-preferred
+          deviceClassName: sim-accelerator-class
+          selectors:
+          - cel:
+              expression: "device.capacity['sim-accelerator.example.com'].memory.compareTo(quantity('100Gi')) >= 0"
+        - name: sim-fallback
+          deviceClassName: sim-accelerator-class

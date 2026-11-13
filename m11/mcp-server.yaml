@@ -1,0 +1,78 @@
+# labs/m11/mcp-server.yaml — the tool server, run as mcp-reader
+#
+# The code is not baked into an image. It is the ConfigMap mcp-server-code,
+# created from labs/m11/mcp-server.py by the lab:
+#
+#   kubectl --context kind-grid-sandbox -n agent-mcp create configmap mcp-server-code --from-file=m11/mcp-server.py
+#
+# and mounted read-only at /app. The image is the upstream python image by
+# index digest, standard library only; nothing is installed into it.
+#
+# The Pod runs under ServiceAccount mcp-reader, so every API call the tools
+# make carries that identity and only the verbs labs/m11/mcp-rbac.yaml grants.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: agent-mcp
+  labels:
+    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/part-of: m11
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcp-server
+        app.kubernetes.io/part-of: m11
+    spec:
+      serviceAccountName: mcp-reader
+      containers:
+        - name: mcp-server
+          image: docker.io/library/python@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+          command: ["python", "-u", "/app/mcp-server.py"]
+          env:
+            - name: PORT
+              value: "8080"
+            - name: TARGET_NAMESPACE
+              value: agent-target
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: code
+          configMap:
+            name: mcp-server-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  namespace: agent-mcp
+  labels:
+    app.kubernetes.io/part-of: m11
+spec:
+  selector:
+    app.kubernetes.io/name: mcp-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

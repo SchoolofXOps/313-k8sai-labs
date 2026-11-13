@@ -244,6 +244,21 @@ if ! docker run --rm --entrypoint grep "${IMAGE}:${TAG}" \
   exit 1
 fi
 
+# The API server's audit policy is IN the image, at the path
+# labs/clusters/grid-sandbox/create.sh's kubeadm patch names (plan 05-04,
+# CONTEXT D-30). It is baked rather than mounted because a kind extraMounts
+# host path resolves inside the Rancher Desktop VM, which shares only the home
+# directory; see the Dockerfile's last layer. Asserted from inside the built
+# image, because the patch mounts it with pathType File and an API server whose
+# policy file is missing never starts.
+if ! docker run --rm --entrypoint test "${IMAGE}:${TAG}" -f /etc/kubernetes/policies/audit-policy.yaml; then
+  echo "FAIL: the audit-policy file /etc/kubernetes/policies/audit-policy.yaml is not in ${IMAGE}:${TAG}." >&2
+  echo "      grid-sandbox's API server is started with --audit-policy-file at that path, so a" >&2
+  echo "      cluster created from this image would never get an API server. Check that" >&2
+  echo "      ${PROFILE_DIR}/audit-policy.yaml exists and the Dockerfile's COPY layer is intact." >&2
+  exit 1
+fi
+
 HANDLER="$(docker run --rm --entrypoint grep "${IMAGE}:${TAG}" \
              -o 'containerd\.runtimes\.[a-z0-9-]*\]' /etc/containerd/config.toml \
            | sed 's/containerd\.runtimes\.//; s/\]//' | tr '\n' ' ')"
@@ -251,8 +266,9 @@ HANDLER="$(docker run --rm --entrypoint grep "${IMAGE}:${TAG}" \
 echo
 echo "    runsc        : ${RUNSC_VERSION}"
 echo "    handlers     : ${HANDLER}"
+echo "    audit policy : /etc/kubernetes/policies/audit-policy.yaml (present in the image)"
 echo "    oci index    : ${OUT_DIR}/image.tar (${PLATFORM_COUNT} platform manifests)"
-echo "OK: ${IMAGE}:${TAG} built for ${PLATFORMS}, loaded for ${HOST_PLATFORM}, runsc present and the 'runsc' containerd handler registered. Nothing published."
+echo "OK: ${IMAGE}:${TAG} built for ${PLATFORMS}, loaded for ${HOST_PLATFORM}, runsc present, the 'runsc' containerd handler registered and the audit policy in place. Nothing published."
 # NOT `kind load` -- that side-loads an image INTO a running cluster, and this
 # image's whole purpose is to BE the cluster's node image, consumed at create
 # time by --image. A node whose containerd config was fixed at image build

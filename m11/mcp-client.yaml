@@ -1,0 +1,27 @@
+# labs/m11/mcp-client.yaml — the Pod the lab calls the tool server from
+#
+# It stands in for whatever would call a tool server at work: an agent, an IDE
+# plugin, a chat front end. It holds no Kubernetes credential at all
+# (automountServiceAccountToken: false). Every call it makes is a plain HTTP
+# POST to http://mcp-server:8080/mcp, and whatever the tools may or may not do
+# is decided by the tool server's identity, not by this Pod's.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mcp-client
+  namespace: agent-mcp
+  labels:
+    app.kubernetes.io/name: mcp-client
+    app.kubernetes.io/part-of: m11
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: client
+      image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+      command: ["sh", "-c", "sleep 3600"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi

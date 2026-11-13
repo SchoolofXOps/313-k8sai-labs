@@ -1,0 +1,10 @@
+# Part 3 — the course's own DeviceClass. It selects every device the synthetic driver publishes.
+# The chart's class keeps the driver's name; this one carries a course name.
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: sim-accelerator-class
+spec:
+  selectors:
+  - cel:
+      expression: "device.driver == 'sim-accelerator.example.com'"

@@ -1,0 +1,29 @@
+# Part 6 — a Pod that holds a synthetic device so its KEP-4680 health field can be read from the
+# Pod's own status: status.containerStatuses[].allocatedResourcesStatus[].resources[].health
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: health-watch-claim
+  namespace: m4-health
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator-class
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: health-watch
+  namespace: m4-health
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: health-watch-claim
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: sim-device

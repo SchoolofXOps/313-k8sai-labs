@@ -1,0 +1,36 @@
+# labs/m11/actor.yaml — the scripted actor, run once
+#
+# The code is the ConfigMap actor-code, created from labs/m11/actor.py by the
+# lab, mounted read-only at /app. restartPolicy: Never, so the Pod runs the
+# script once and stays Completed with its log, which the lab reads.
+#
+# To run it again, delete the Pod and the proposal-1 ConfigMap first.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: actor
+  namespace: agent-actor
+  labels:
+    app.kubernetes.io/name: actor
+    app.kubernetes.io/part-of: m11
+spec:
+  serviceAccountName: actor
+  restartPolicy: Never
+  containers:
+    - name: actor
+      image: docker.io/library/python@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+      command: ["python", "-u", "/app/actor.py"]
+      resources:
+        requests:
+          cpu: 20m
+          memory: 48Mi
+        limits:
+          memory: 128Mi
+      volumeMounts:
+        - name: code
+          mountPath: /app
+          readOnly: true
+  volumes:
+    - name: code
+      configMap:
+        name: actor-code

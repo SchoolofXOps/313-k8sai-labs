@@ -1,0 +1,36 @@
+{
+  "_why": [
+    "Module 3 deep-dive checks (labs/m3/deep-dive.checks.json), REAL, no cluster. They read the evidence file the deep dive writes at the clone root, evidence/m3-claim-grades.md, which is outside the platform repository and never committed.",
+    "They assert content per row, never the heading: three rows, a stage word in every Stage read cell, and every Source URL pinned to a 40-hex commit or the v1.0.5 release asset. An absent file prints rows=0."
+  ],
+  "truth_contract": "REAL",
+  "checks": [
+    {
+      "id": "dd-evidence-three-rows",
+      "describe": "evidence/m3-claim-grades.md: the evidence table under the header | Evidence type | Claim | Stage read | Source URL | has exactly three data rows",
+      "weight": 1,
+      "run": "f=evidence/m3-claim-grades.md; [ -f \"$f\" ] || { echo 'rows=0 file=missing'; exit 0; }; awk -F'|' '/^\\| *Evidence type *\\|/{s=1;next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&!/^\\|/{s=0} s&&/^\\|/{r++} END{printf \"rows=%d\\n\", r}' \"$f\"",
+      "assert": {
+        "matches": "^rows=3$"
+      }
+    },
+    {
+      "id": "dd-evidence-stage-per-row",
+      "describe": "evidence/m3-claim-grades.md: every row's Stage read cell holds one of alpha, beta, stable or served, as a word",
+      "weight": 1,
+      "run": "f=evidence/m3-claim-grades.md; [ -f \"$f\" ] || { echo 'rows=0 nostage=missing-file'; exit 0; }; awk -F'|' '/^\\| *Evidence type *\\|/{s=1;next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&!/^\\|/{s=0} s&&/^\\|/{r++; if($4 !~ /(^|[^a-z])(alpha|beta|stable|served)([^a-z]|$)/) n++} END{printf \"rows=%d nostage=%d\\n\", r, n}' \"$f\"",
+      "assert": {
+        "matches": "^rows=3 nostage=0$"
+      }
+    },
+    {
+      "id": "dd-evidence-source-pinned",
+      "describe": "evidence/m3-claim-grades.md: every row's Source URL is https:// and pinned, either by a 40-hex commit SHA or by the releases/download/v1.0.5/ asset path",
+      "weight": 2,
+      "run": "f=evidence/m3-claim-grades.md; [ -f \"$f\" ] || { echo 'rows=0 unpinned=missing-file'; exit 0; }; awk -F'|' 'BEGIN{h=\"[0-9a-f]\"; p=\"\"; for(i=0;i<40;i++) p=p h;} /^\\| *Evidence type *\\|/{s=1;next} s&&/^\\|[-| :]+\\|[ \\t]*$/{next} s&&!/^\\|/{s=0} s&&/^\\|/{r++; u=$5; gsub(/^[ \\t]+|[ \\t]+$/,\"\",u); if(u !~ /^https:\\/\\// || (u !~ p && index(u,\"/releases/download/v1.0.5/\")==0)) n++} END{printf \"rows=%d unpinned=%d\\n\", r, n}' \"$f\"",
+      "assert": {
+        "matches": "^rows=3 unpinned=0$"
+      }
+    }
+  ]
+}

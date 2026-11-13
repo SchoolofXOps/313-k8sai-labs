@@ -1,0 +1,17 @@
+# Part 3 — a ResourceClaimTemplate that selects a device by attribute, not by count.
+# pcieRoot is published by the driver round-robin by device index: even indexes on pci0000:00,
+# odd indexes on pci0000:80. No metadata.namespace: apply it into the namespace that uses it.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: sim-device-on-root-80
+spec:
+  spec:
+    devices:
+      requests:
+      - name: sim-device
+        exactly:
+          deviceClassName: sim-accelerator-class
+          selectors:
+          - cel:
+              expression: "device.attributes['resource.kubernetes.io'].pcieRoot == 'pci0000:80'"

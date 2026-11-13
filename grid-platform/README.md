@@ -67,6 +67,9 @@ by name: `git fetch upstream --tags`. Restoring those two directories alone keep
 scripts under `clusters/` and `tools/`, and keeps this README as it is on `main`. A whole-tree
 `git checkout grid-v0` would pin you to the scripts as they were when the tag was cut, and restoring
 all of `grid-platform` would bring back the older copy of this README that the tag carries.
+To start after a later module, run the sequence that the capability-per-version page (Reference →
+Capability by version on the course site) prints under that module: one restore per reference point,
+in order, each naming only the files that reference point adds.
 
 **Learners never cut `grid-v*` tags.** That name space is the course's. Your clone fetches the
 course's tags, so a `grid-v0` of your own collides with it. Commit with the module named in the

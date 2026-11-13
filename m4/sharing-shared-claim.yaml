@@ -1,0 +1,62 @@
+# Part 5, representation 4 — one ResourceClaim referenced by two Pods. Sharing one claim across
+# Pods is DRA-native: both Pods get the same allocated device. The opaque config is handed to the
+# driver unread by Kubernetes; the parameters' API group is the example driver's own constant
+# (api/example.com/resource/gpu/v1alpha1/register.go at v0.5.0), independent of the driver name.
+# Kubernetes allocates the device; the driver decides what TimeSlicing means. Nothing here
+# isolates the two Pods from each other.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: shared-claim
+  namespace: m4-sharing
+spec:
+  devices:
+    requests:
+    - name: sim-device
+      exactly:
+        deviceClassName: sim-accelerator-class
+    config:
+    - requests: ["sim-device"]
+      opaque:
+        driver: sim-accelerator.example.com
+        parameters:
+          apiVersion: gpu.resource.example.com/v1alpha1
+          kind: GpuConfig
+          sharing:
+            strategy: TimeSlicing
+            timeSlicingConfig:
+              interval: Long
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shared-a
+  namespace: m4-sharing
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: shared-claim
+  containers:
+  - name: workload
+    image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "env; sleep 3600"]
+    resources:
+      claims:
+      - name: sim-device
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shared-b
+  namespace: m4-sharing
+spec:
+  resourceClaims:
+  - name: sim-device
+    resourceClaimName: shared-claim
+  containers:
+  - name: workload
+    image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "env; sleep 3600"]
+    resources:
+      claims:
+      - name: sim-device

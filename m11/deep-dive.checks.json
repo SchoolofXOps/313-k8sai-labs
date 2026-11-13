@@ -1,0 +1,36 @@
+{
+  "_why": [
+    "Module 11 deep-dive checks (labs/m11/deep-dive.checks.json), REAL. Object state only, read at the deep dive's end, after its last section and before its teardown.",
+    "State-tolerant: the deep dive creates or re-applies everything it reads in agent-probes, so these hold whether or not the lab ran first."
+  ],
+  "truth_contract": "REAL",
+  "checks": [
+    {
+      "id": "dd-sandbox-pod-owned-by-sandbox",
+      "describe": "probe-sandbox's Pod carries an ownerReferences entry of kind Sandbox with controller: true: the Agent Sandbox controller created it and owns it, so deleting the Sandbox deletes the Pod. No owner prints owner=none",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get pod probe-sandbox -o json | jq -r '[.metadata.ownerReferences[]? | select(.kind == \"Sandbox\")] | if length == 0 then \"owner=none controller=none\" else \"owner=Sandbox controller=\" + ((.[0].controller // false) | tostring) end'",
+      "assert": {
+        "matches": "^owner=Sandbox controller=true$"
+      }
+    },
+    {
+      "id": "dd-reap-demo-reaped",
+      "describe": "Sandbox reap-demo and its Pod are both gone after spec.shutdownTime passed under shutdownPolicy Delete, and the namespace still holds the reaped Pod's events, so an absence on a cluster where reap-demo never existed does not pass. An unreachable cluster prints namespace=unread",
+      "weight": 2,
+      "run": "ns=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox get namespace agent-probes -o name 2>/dev/null); [ \"$ns\" = \"namespace/agent-probes\" ] || { echo namespace=unread; exit 0; }; s=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get sandbox reap-demo -o name --ignore-not-found); p=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get pod reap-demo -o name --ignore-not-found); e=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get events -o json | jq -r '[.items[] | select(.involvedObject.name == \"reap-demo\")] | length'); [ -n \"$s\" ] && s=present || s=absent; [ -n \"$p\" ] && p=present || p=absent; [ \"${e:-0}\" -gt 0 ] && h=seen || h=none; printf 'sandbox=%s pod=%s history=%s\\n' \"$s\" \"$p\" \"$h\"",
+      "assert": {
+        "matches": "^sandbox=absent pod=absent history=seen$"
+      }
+    },
+    {
+      "id": "dd-ctb-projected",
+      "describe": "ClusterTrustBundle m11-demo-bundle exists, and Pod ctb-reader's spec projects it through a clusterTrustBundle volume source. Object state; the PEM read back from inside the Pod is the page's evidence",
+      "weight": 1,
+      "run": "b=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox get clustertrustbundle m11-demo-bundle -o name --ignore-not-found); j=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-probes get pod ctb-reader -o json 2>/dev/null | jq -r '[.spec.volumes[]?.projected.sources[]?.clusterTrustBundle.name // empty] | index(\"m11-demo-bundle\") != null'); [ -n \"$b\" ] && b=present || b=absent; [ \"$j\" = \"true\" ] && j=yes || j=no; printf 'bundle=%s projected=%s\\n' \"$b\" \"$j\"",
+      "assert": {
+        "matches": "^bundle=present projected=yes$"
+      }
+    }
+  ]
+}

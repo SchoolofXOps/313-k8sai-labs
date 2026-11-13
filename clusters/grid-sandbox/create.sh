@@ -29,7 +29,7 @@
 # must follow to add a fifth. scripts/standards/profile-set.mjs is the gate
 # that goes red if one reappears without it.
 #
-# THREE DIFFERENCES FROM THE BASE PROFILE, each deliberate.
+# FOUR DIFFERENCES FROM THE BASE PROFILE, each deliberate.
 #
 #   1. --image is the LOCALLY BUILT node image, BY TAG. That is the one
 #      enumerated exemption from the digest-pin rule (PLAT-01), and the reason
@@ -67,6 +67,25 @@
 #      M6's four-path storage comparison. This profile runs M11's sandbox lab
 #      and never reads that path, and extraMounts is create-time-only, so
 #      carrying it would be a permanent cost for a path nothing here uses.
+#
+#   4. AN API-SERVER AUDIT LOG, from create time (plan 05-04, CONTEXT D-30).
+#      M11 reads "a denied mutation with audit evidence" from the API server
+#      itself, and audit flags are kube-apiserver arguments: a static Pod's
+#      command is written by kubeadm at init, so they are create-time decisions
+#      exactly like the node image. The policy is Metadata level only, scoped
+#      by exact name to M11's three namespaces and two ServiceAccount groups,
+#      and written to the API server's stdout (--audit-log-path=-), so it is
+#      read with `kubectl logs` of the kube-apiserver Pod.
+#
+#      The policy FILE is baked into the node image
+#      (labs/sandbox/runsc-node/audit-policy.yaml, COPYed by its Dockerfile),
+#      not mounted from this clone. An extraMounts host path is resolved by
+#      dockerd inside the Rancher Desktop VM, which shares only the home
+#      directory; a clone anywhere else would hand the API server an empty
+#      directory where its policy file should be, and it would never start.
+#      So this script asserts the file is IN THE IMAGE before anything is
+#      deleted or created, and names the rebuild when it is not — an image
+#      built before this change has the runtime but not the policy.
 #
 # DOES THE NODE COUNT VARY WITH SIZE? YES — by the same axis as the base
 # profile, 1 control-plane + lab.sizes.<SIZE>.worker_nodes, read from
@@ -254,6 +273,23 @@ if ! docker image inspect "${KIND_IMAGE}" >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- the image must carry the audit policy, asserted before anything changes --
+# Present is not enough: an image built before plan 05-04 has the sandbox
+# runtime and no audit policy, and the kubeadm patch below mounts the policy
+# with pathType File, so an API server created from that image never starts —
+# after the base profile has already been deleted. Probed here, BEFORE the base
+# teardown, so a stale image costs the learner a rebuild and nothing else.
+if ! docker run --rm --entrypoint test "${KIND_IMAGE}" -f /etc/kubernetes/policies/audit-policy.yaml; then
+  echo "FAIL: the node image '${KIND_IMAGE}' does not carry the API server's audit policy" >&2
+  echo "      at /etc/kubernetes/policies/audit-policy.yaml. It was built before the policy" >&2
+  echo "      was added to it, and the API server this profile starts reads that file at" >&2
+  echo "      boot. Nothing was deleted or created. Rebuild the image, then re-run this:" >&2
+  echo "        bash ${LABS_DIR}/sandbox/runsc-node/build.sh" >&2
+  echo "        bash ${PROFILE_DIR}/create.sh" >&2
+  echo "      (from the labs directory: bash sandbox/runsc-node/build.sh)" >&2
+  exit 1
+fi
+
 # --- one profile at a time: the base is torn down, with its restore named -----
 if kind_cluster_exists "${BASE_PROFILE}"; then
   echo "NOTE: the base profile '${BASE_PROFILE}' is running, and this course runs ONE"
@@ -295,14 +331,44 @@ done
 KIND_CONFIG_FILE="$(mktemp "${TMPDIR:-/tmp}/grid-sandbox-kind-config.XXXXXX")"
 trap 'rm -f "${KIND_CONFIG_FILE}"' EXIT
 
-# No featureGates block and no extraMounts — see differences 2 and 3. No
-# kubeadm patch either: this profile needs no API group the server does not
-# serve by default, so there is no patch to get the dialect wrong in.
+# No featureGates block and no extraMounts — see differences 2 and 3. ONE
+# kubeadm patch, on the control-plane node, and it exists for difference 4:
+# the audit flags are kube-apiserver arguments, and the only way to give a kind
+# API server an argument is through the kubeadm configuration it is created
+# from. The policy file it names is already inside the node image, which is why
+# there is no extraMounts entry to carry it.
 cat > "${KIND_CONFIG_FILE}" <<'EOF'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
+    # kubeadm dialect note: kind v0.33 + Kubernetes 1.37 render kubeadm
+    # v1beta4, where extraArgs is a name/value LIST — not the map form 304's
+    # audit profile used. The patch DECLARES NO apiVersion: kind's matcher then
+    # matches on `kind` alone, and a patch naming a superseded dialect would be
+    # dropped in silence and leave a cluster with no audit log. STANDARDS.md
+    # section C16; gate scripts/standards/kubeadm-dialect.mjs.
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            # The policy baked into the node image by its Dockerfile.
+            - name: audit-policy-file
+              value: /etc/kubernetes/policies/audit-policy.yaml
+            # "-" is the API server's own stdout, so the events land in the
+            # static Pod's container log and are read with `kubectl logs`.
+            - name: audit-log-path
+              value: "-"
+          # The static Pod sees the node's filesystem only through volumes, so
+          # the node-side file is mounted into it. pathType File: a missing
+          # file fails the mount rather than being created as a directory.
+          extraVolumes:
+            - name: audit-policy
+              hostPath: /etc/kubernetes/policies/audit-policy.yaml
+              mountPath: /etc/kubernetes/policies/audit-policy.yaml
+              readOnly: true
+              pathType: File
 EOF
 
 _w=0
@@ -324,6 +390,8 @@ echo
 echo "grid-sandbox profile ready at SIZE=${SIZE}: 1 control-plane + ${WORKER_NODES} worker(s)."
 echo "  node image: ${KIND_IMAGE} (locally built — the enumerated digest-pin exemption)"
 echo "  kubeconfig: ${KUBECONFIG} (isolated), context: ${CONTEXT}"
+echo "  audit log:  Metadata level, M11's agent-* namespaces and ServiceAccount groups, on the"
+echo "              API server's stdout — read: kubectl --context ${CONTEXT} -n kube-system logs kube-apiserver-${CLUSTER_NAME}-control-plane"
 gates_enabled_on_cluster && _gates_rc=0 || _gates_rc=$?
 case "${_gates_rc}" in
   0) echo "  feature gates: ENABLED — ${FEATURE_GATES// /, }" ;;
