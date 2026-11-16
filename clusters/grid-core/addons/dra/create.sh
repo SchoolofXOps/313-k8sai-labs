@@ -275,6 +275,22 @@ if ! helm template "${RELEASE}" "${CHART_CLONE}/${CHART_SUBDIR}" \
   exit 1
 fi
 
+# --- normalise the render -----------------------------------------------------
+# helm 3 and helm 4 render this chart to the same objects but not the same bytes:
+# helm 4 writes a blank line before nine of the `---` document separators and
+# helm 3 does not (measured on the chart at v0.5.0 with helm v3.22.0 and v4.2.3,
+# plan 05-28; scripts/addon-dra-render.test.mjs holds both renders). helm is a
+# floor in this course, not an exact pin, so either major is a correctly
+# configured host, and the file below is rewritten on every run. A blank line
+# directly before a separator carries nothing in YAML, so it is dropped, and the
+# committed copy is the same bytes whichever helm wrote it.
+normalize_render() {
+  awk '/^[[:space:]]*$/ { held = held $0 "\n"; next }
+       /^---$/          { held = "" }
+                        { printf "%s", held; held = ""; print }
+       END              { printf "%s", held }'
+}
+
 # --- substitute the digest ----------------------------------------------------
 # Every rendered reference to the driver image becomes the resolved index digest.
 sed "s|${DRIVER_IMAGE_REPO}:[A-Za-z0-9._-]\{1,\}|${DRIVER_IMAGE}|g" \
@@ -341,7 +357,7 @@ esac
   echo "# The devices this object set advertises are SYNTHETIC. The driver's own"
   echo "# device names, its model string and its 80Gi \`memory\` capacity are Go"
   echo "# constants, not readings — see planning/lab-tests/03-addon-dra.md."
-  cat "${RENDER_TMP}.sub"
+  normalize_render < "${RENDER_TMP}.sub"
 } > "${RENDERED}"
 
 # --- apply --------------------------------------------------------------------

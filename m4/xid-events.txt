@@ -11,7 +11,7 @@ Nov 03 02:14:09 sim-node-a kernel: NVRM: Xid (PCI:0000:3b:00): 63, pid=18422, na
 Nov 04 11:52:41 sim-node-b kernel: NVRM: Xid (PCI:0000:86:00): 79, pid=0, name=none, GPU has fallen off the bus.
 Nov 04 11:52:41 sim-node-b kernel: NVRM: GPU 0000:86:00.0: GPU has fallen off the bus.
 #
-# Section 2 — samples shaped like dcgm-exporter's Prometheus exposition of the last XID seen.
+# Section 2 — samples in the format of dcgm-exporter's Prometheus exposition of the last XID seen.
 # The value is the XID number itself, not a count.
 # HELP DCGM_FI_DEV_XID_ERRORS Value of the last XID error encountered.
 # TYPE DCGM_FI_DEV_XID_ERRORS gauge

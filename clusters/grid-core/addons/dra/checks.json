@@ -45,21 +45,21 @@
       "id": "device-health-reported-healthy-in-pod-status",
       "describe": "PLAT-07's signal is OBJECT STATE, not a metric: the KEP-4680 health field exists on the claiming Pod at status.containerStatuses[].allocatedResourcesStatus and reports the derived device Healthy in the steady state. The device is derived from the claim's own allocation result, never named, and no Pod phase is asserted anywhere. ResourceHealthStatus is beta and default-on from Kubernetes 1.36, so no extra feature gate is involved",
       "weight": 2,
-      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/clusters/grid-core/addons/dra/health-probe.sh steady",
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/dra && { [ -d \"$d\" ] || d=labs/$d; } && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash \"$d/health-probe.sh\" steady",
       "assert": { "matches": "\"health\":\\s*\"Healthy\"" }
     },
     {
       "id": "health-probe-drives-both-transitions",
       "describe": "the probe script exits 0, which it only does after driving Healthy -> Unhealthy -> Healthy through the DEMO-ONLY annotation override and reading each transition back from allocatedResourcesStatus. A one-way probe cannot tell a real signal from a device that was unhealthy all along, which is why the return transition is part of the same run",
       "weight": 2,
-      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/clusters/grid-core/addons/dra/health-probe.sh",
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/dra && { [ -d \"$d\" ] || d=labs/$d; } && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash \"$d/health-probe.sh\"",
       "assert": { "exit": 0 }
     },
     {
       "id": "committed-rendered-manifest-is-fully-digest-pinned",
       "describe": "PLAT-01 over the layer's own artifact, and the ONE entry here that needs no cluster: every image: line in the committed rendered-pinned.yaml carries an @sha256 digest. It counts the references as well as the unpinned ones, so a file with zero image lines — an empty or truncated render — cannot satisfy it either",
       "weight": 2,
-      "run": "cd \"$(git rev-parse --show-toplevel)\" && sed -n 's/^[[:space:]]*image:[[:space:]]*\\(.*\\)$/\\1/p' labs/clusters/grid-core/addons/dra/rendered-pinned.yaml | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/dra && { [ -d \"$d\" ] || d=labs/$d; } && sed -n 's/^[[:space:]]*image:[[:space:]]*\\(.*\\)$/\\1/p' \"$d/rendered-pinned.yaml\" | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
       "assert": { "matches": "^image_refs=[1-9][0-9]* unpinned=0$" }
     }
   ]

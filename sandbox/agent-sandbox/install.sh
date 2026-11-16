@@ -209,6 +209,10 @@ fi
 # ever serves a second version, the course must say which one it taught.
 SERVED="$(kc get crd sandboxes.agents.x-k8s.io \
             -o jsonpath='{range .spec.versions[*]}{.name}{" "}{end}' | tr -s ' ')"
+# The range writes a space after every version, so the list ends in one. Strip
+# it: the summary line below prints this value, and a learner compares that line
+# with the page's (M11 module walk F5, plan 05-27).
+SERVED="${SERVED% }"
 case "${SERVED}" in
   *v1beta1*) : ;;
   *) echo "FAIL: the Sandbox CRD does not serve v1beta1; it serves: ${SERVED}" >&2
@@ -222,5 +226,8 @@ echo "  controller image    : $(kc -n "${NAMESPACE}" get "deploy/${DEPLOYMENT}" 
                                   -o jsonpath='{.spec.template.spec.containers[0].image}')"
 echo "  extensions group    : $(kc get crd -o name 2>/dev/null \
                                   | grep -c 'extensions.agents.x-k8s.io' || true) CRD(s) present (0 expected -- out of scope here)"
-echo "OK: Agent Sandbox v${AGENT_SANDBOX_VERSION} installed -- controller and the Sandbox CRD on agents.x-k8s.io/${SERVED% }, nothing else."
-echo "next: kubectl --context ${CONTEXT} apply -f labs/sandbox/agent-sandbox/sandbox.yaml"
+echo "OK: Agent Sandbox v${AGENT_SANDBOX_VERSION} installed -- controller and the Sandbox CRD on agents.x-k8s.io/${SERVED}, nothing else."
+# The example Sandbox beside this script, by its absolute path: the publish step
+# strips the source repository's leading labs/, so a relative path that names it
+# is wrong in one of the two trees (deferred row 05-16, plan 05-28).
+echo "next: kubectl --context ${CONTEXT} apply -f $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sandbox.yaml"
