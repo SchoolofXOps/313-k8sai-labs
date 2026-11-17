@@ -1,6 +1,6 @@
 # labs/m11/probe-sandbox.yaml — the Sandbox the lab reads the kernel from
 #
-# agents.x-k8s.io/v1beta1 is the only version the Agent Sandbox v1.0.5 CRD
+# agents.x-k8s.io/v1beta1 is the only version the Agent Sandbox v1.0.11 CRD
 # serves. spec.podTemplate is a real PodSpec, so it carries runtimeClassName,
 # and that one field is what places this workload under gVisor's runsc.
 #
@@ -9,8 +9,8 @@
 #
 # What this object proves and what it does not: only the kernel identity read
 # from INSIDE the Pod shows that the workload runs under runsc. A Ready
-# condition or a Running phase does not, because a silent fall-back to the
-# default runtime looks exactly the same from outside.
+# condition or a Running phase does not, because a Pod on the default runtime
+# (one with no runtimeClassName) looks exactly the same from outside.
 #
 # The labels on the Pod template are read by two other files:
 #   app.kubernetes.io/part-of: m11-probes  -> egress-deny.yaml, egress-allow-443.yaml

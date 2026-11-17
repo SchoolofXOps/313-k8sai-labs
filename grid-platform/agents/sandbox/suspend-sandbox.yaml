@@ -1,0 +1,60 @@
+# labs/m11/suspend-sandbox.yaml — the Sandbox the lab suspends and resumes
+#
+# Every field below is in the core Sandbox CRD that Agent Sandbox v1.0.11's
+# sandbox.yaml installs (agents.x-k8s.io/v1beta1): spec.operatingMode
+# (Running | Suspended, default Running) and spec.volumeClaimTemplates. Nothing
+# here needs the extensions group, so the install fence holds.
+#
+# What the controller does with it, read from controllers/sandbox_controller.go
+# at v1.0.11:
+#   - it creates one PVC per claim template, named <template>-<sandbox>, so
+#     this one is workspace-suspend-demo, owned by the Sandbox;
+#   - it creates one Pod named after the Sandbox, suspend-demo, with that PVC
+#     as a volume named after the template, workspace, mounted below at /data;
+#   - while spec.operatingMode is Suspended it deletes that Pod and leaves the
+#     PVC in place; set back to Running, it creates a new Pod on the same PVC.
+#
+# So a suspend here is a cold restart, not a checkpoint. A file on /data is on
+# the PVC and comes back. Anything held in memory, including a file under
+# /dev/shm, which is memory-backed, ends with the Pod and does not.
+#
+# The container traps SIGTERM and exits at once, so the suspend does not wait
+# out the 30-second grace period a shell that ignores SIGTERM would cost.
+#
+# Every name is 63 characters or shorter, so neither the v1.0.6 Sandbox name
+# rule nor the v1.0.9 claim-template name rule applies. No part-of label: the
+# egress policies in agent-probes never select this Pod.
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: suspend-demo
+  namespace: agent-probes
+spec:
+  operatingMode: Running
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 64Mi
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/component: suspend-run
+    spec:
+      runtimeClassName: runsc
+      containers:
+        - name: agent
+          image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+          command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600 & wait $!; done"]
+          volumeMounts:
+            - name: workspace
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

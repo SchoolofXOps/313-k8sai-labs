@@ -12,8 +12,10 @@
 #
 # The instrument is the object itself: the Ready condition's
 # lastTransitionTime minus metadata.creationTimestamp, at second resolution.
-# Agent Sandbox v1.0.5 has no creation-latency metric. Nothing in any checks
-# file reads the seconds.
+# Agent Sandbox v1.0.11 also records agent_sandbox_creation_latency_ms for a
+# Sandbox created directly (#1076, since v1.0.8); the lab times from the object
+# all the same, so every run reads the same instrument. Nothing in any checks
+# file reads the seconds or the metric.
 apiVersion: agents.x-k8s.io/v1beta1
 kind: Sandbox
 metadata:
