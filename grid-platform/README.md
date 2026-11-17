@@ -27,8 +27,11 @@ README is a second thing to maintain that says nothing. The READMEs are the cont
 
 ## Reference-tag convention
 
-**Tag name shape:** `grid-v<major>[.<minor>]` — `grid-v0`, `grid-v0.1`, `grid-v1.2`, `grid-v4.0`.
-Lowercase, one leading `v`, no build suffix, no pre-release suffix.
+**Tag name shape:** `grid-v<major>[.<minor>[.<patch>]]` — `grid-v0`, `grid-v0.1`, `grid-v1.2`, `grid-v4.0`,
+and a patch tag such as `grid-v0.5.1`. Lowercase, one leading `v`, no build suffix, no pre-release
+suffix. A patch tag is a revision: a published tag is never moved, so when a module is revised, the
+files it changed ship under `grid-vX.Y.Z` on top of `grid-vX.Y`, and that tag's restore names only
+those files.
 
 **Reference-tag owner:** Gourav Shah — School of DevOps & AI. Read from `course.config.json`'s
 `course.author` field and the design spec's course-identity table; no artifact in this repository named a
