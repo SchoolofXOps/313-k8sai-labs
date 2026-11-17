@@ -159,8 +159,11 @@ platform_check_refs() {
     // A purely numeric-dotted "repository" is not one: a chart values file
     // writes `tag: "1.121.3@sha256:<d>"`, which is an INPUT to a render and
     // half a reference. The whole reference is in the rendered manifest, which
-    // this walk also reads, so dropping the fragment loses no image.
-    const NUMERIC_ONLY = /^[0-9]+(?:\.[0-9]+)*$/;
+    // this walk also reads, so dropping the fragment loses no image. The same
+    // holds with a `v` prefix, `tag: "v2.11.0@sha256:<d>"` (the HAMi chart,
+    // labs/m4/optional/values.yaml, plan 05-41); no registry repository is a
+    // bare `v<number>` with no slash.
+    const NUMERIC_ONLY = /^v?[0-9]+(?:\.[0-9]+)*$/;
     // One exact path, not a pattern. See the self-reference note above.
     const SELF = new Set([path.join(root, "tools", "platform-check.sh")]);
     const out = new Set();
@@ -172,6 +175,18 @@ platform_check_refs() {
         if (SELF.has(p)) continue;
         const text = fs.readFileSync(p, "utf8");
         for (const m of text.matchAll(RE)) {
+          // A match right after a `.` or a `\` is a FRAGMENT, never a
+          // reference: a checks file asserts a pin with the anchored regex
+          // `^ghcr\\.io/...@sha256:<d>$`, and the pattern, unable to start on
+          // the backslash or the dot, starts on `io`. That collected
+          // `io/llm-d/...`, a repository no registry has, and failed both
+          // arms of profiles.yml (run 43377409201, plan 05-24). A real
+          // reference preceded by a letter or digit would have matched from
+          // that earlier character, so nothing real is skipped; the unescaped
+          // reference sits in the manifest the regex checks, which this walk
+          // also reads. scripts/platform-check-collector.test.mjs.
+          const before = m.index > 0 ? text[m.index - 1] : "";
+          if (before === "." || before === "\\") continue;
           // Strip a tag sitting between the repository and the digest. The
           // digest is what identifies the image; the tag beside it is
           // decoration that some registries reject on an inspect.

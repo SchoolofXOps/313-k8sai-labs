@@ -1,0 +1,20 @@
+# The vendor device plugin on mock devices, the deliberate failure. SIMULATED.
+#
+# The mock's t4 profile serves four MOCK DEVICES, so the device plugin advertises 4 on the worker.
+# This Pod asks for 5, one more than the node advertises, and stays unschedulable. The lab reads
+# the reason from its PodScheduled condition, never from its phase.
+#
+# The resource name below is NVIDIA's; the devices behind it are mocks served by a mock NVML
+# library. A resource name is a matching key, not a hardware claim.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mock-plugin-over
+  namespace: m4-mock
+spec:
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      limits:
+        nvidia.com/gpu: 5

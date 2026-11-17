@@ -6,12 +6,12 @@
 # and with every driver image reference replaced by the resolved
 # manifest-list index digest.
 #
-# Regenerate with:
-#   bash labs/clusters/grid-core/addons/dra/create.sh
+# Regenerate with (a reviewed change only):
+#   REGENERATE=1 bash labs/clusters/grid-core/addons/dra/create.sh
 #
 # It is committed so the applied object set is reviewable in the tree and
-# so the digest-pin gate has a real subject. A clean `git status` after a
-# create run is the evidence that this copy matches the chart at the tag.
+# so the digest-pin gate has a real subject. create.sh applies THIS file,
+# and only after a fresh render at the pinned commit matches it byte for byte.
 #
 # The devices this object set advertises are SYNTHETIC. The driver's own
 # device names, its model string and its 80Gi `memory` capacity are Go
@@ -29,7 +29,6 @@ metadata:
     app.kubernetes.io/instance: dra-example-driver
     app.kubernetes.io/version: "v0.5.0"
     app.kubernetes.io/managed-by: Helm
-
 ---
 # Source: dra-example-driver/templates/clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -60,7 +59,6 @@ rules:
 - apiGroups: ["resource.k8s.io"]
   resources: ["resourceslices"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-
 ---
 # Source: dra-example-driver/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -76,7 +74,6 @@ roleRef:
   kind: ClusterRole
   name: dra-example-driver-role
   apiGroup: rbac.authorization.k8s.io
-
 ---
 # Source: dra-example-driver/templates/role.yaml
 # The kubelet plugin watches its OWN pod (by name, in this namespace) to pick up
@@ -92,7 +89,6 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["watch"]
-
 ---
 # Source: dra-example-driver/templates/rolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -108,7 +104,6 @@ roleRef:
   kind: Role
   name: dra-example-driver-pods-role
   apiGroup: rbac.authorization.k8s.io
-
 ---
 # Source: dra-example-driver/templates/kubeletplugin-metrics-svc.yaml
 apiVersion: v1
@@ -133,7 +128,6 @@ spec:
     protocol: TCP
     port: 8080
     targetPort: metrics
-
 ---
 # Source: dra-example-driver/templates/kubeletplugin.yaml
 apiVersion: apps/v1
@@ -263,7 +257,6 @@ spec:
       - name: cdi
         hostPath:
           path: /var/run/cdi
-
 ---
 # Source: dra-example-driver/templates/deviceclass.yaml
 apiVersion: resource.k8s.io/v1
@@ -274,7 +267,6 @@ spec:
   selectors:
   - cel:
       expression: "device.driver == 'sim-accelerator.example.com'"
-
 ---
 # Source: dra-example-driver/templates/validatingadmissionpolicy.yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -308,7 +300,6 @@ spec:
     messageExpression: >-
       "this user running on node '"+variables.userNodeName+"' may not modify " +
       (variables.objectNodeName == "" ?"cluster resourceslices" : "resourceslices on node '"+variables.objectNodeName+"'")
-
 ---
 # Source: dra-example-driver/templates/validatingadmissionpolicybinding.yaml
 apiVersion: admissionregistration.k8s.io/v1

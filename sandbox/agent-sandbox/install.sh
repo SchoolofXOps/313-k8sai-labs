@@ -9,7 +9,7 @@
 # be placed under gVisor without the Sandbox API knowing gVisor exists.
 #
 # SCOPE -- controller and CRD only, deliberately.
-# Upstream v1.0.5 publishes three release manifests:
+# Upstream v1.0.11 publishes three release manifests:
 #   sandbox.yaml                  controller + the Sandbox CRD      <- this one
 #   extensions.yaml               SandboxClaim / SandboxTemplate /
 #                                 SandboxWarmPool, on the separate
@@ -23,12 +23,16 @@
 # by installing extensions.yaml as a separate, explicit step -- not by this
 # script.
 #
-# API group note (CLAUDE.md, Modules 10-12): the Sandbox CRD in v1.0.5 serves
+# API group note (CLAUDE.md, Modules 10-12): the Sandbox CRD in v1.0.11 serves
 # agents.x-k8s.io/v1beta1 and NOTHING ELSE. v1alpha1 and its conversion
 # webhooks were removed at v1.0.0, so any manifest lifted from a 2025-era
 # example is dead on arrival -- it will be rejected by the API server, not
-# silently converted. Verified by reading the CRD in the pinned manifest:
-# planning/lab-tests/raw/spike-01/arm64/05-agent-sandbox-manifest-inspect.log
+# silently converted. Verified by reading the CRD in the pinned manifest on
+# 2026-11-17: exactly one CustomResourceDefinition, sandboxes.agents.x-k8s.io,
+# serving v1beta1 only, with spec.operatingMode (Running | Suspended) and
+# spec.volumeClaimTemplates in its schema
+# (planning/lab-tests/raw/05-addition/agent-sandbox-repin/03-v1.0.11-sandbox-yaml-census.txt;
+# the v1.0.5 read was planning/lab-tests/raw/spike-01/arm64/05-agent-sandbox-manifest-inspect.log).
 #
 # Usage:
 #   bash install.sh            # install controller + CRD, wait for rollout
@@ -42,7 +46,7 @@
 # Idempotent: re-running re-applies the same pinned manifest and re-waits for
 # the rollout; nothing is duplicated and no Sandbox object is touched.
 # bash-3.2 compatible (macOS default shell).
-# Pinned: Agent Sandbox v1.0.5 (release manifest, content-pinned by sha256).
+# Pinned: Agent Sandbox v1.0.11 (release manifest, content-pinned by sha256).
 set -euo pipefail
 
 # --- pinned-binary resolution -------------------------------------------------
@@ -65,49 +69,82 @@ export PATH
 assert_kubectl_version
 
 # --- knobs -------------------------------------------------------------------
-# Pinned to v1.0.5 exactly. Upstream ships a release every week or so
-# (v1.0.0 2026-08-28 ... v1.0.5 2026-10-01), and it removed a whole API version
-# at v1.0.0, so "latest" is not a safe reference for course material: the
-# version and the API group version must be pairable on screen.
-AGENT_SANDBOX_VERSION="${AGENT_SANDBOX_VERSION:-1.0.5}"
+# Pinned to v1.0.11 exactly (released 2026-11-12; the latest release on the
+# releases API when it was read, 2026-11-17 -- plan 05-34, Phase 5 CONTEXT
+# D-63, which supersedes the v1.0.5 pin of D-25). Upstream ships a release
+# every week or so (v1.0.0 2026-08-28 ... v1.0.11 2026-11-12), and it removed a
+# whole API version at v1.0.0, so "latest" is not a safe reference for course
+# material: the version and the API group version must be pairable on screen.
+# M11's suspend/resume step needs v1.0.9 or later (#2079: a suspended Sandbox
+# no longer reports Finished=True; #1775: the suspend and resume metrics).
+AGENT_SANDBOX_VERSION="${AGENT_SANDBOX_VERSION:-1.0.11}"
 # Upstream distributes release MANIFESTS, not a Helm chart -- there is no
 # published chart for this project at this version, so there is nothing to
 # `helm install`.
 MANIFEST_URL="${MANIFEST_URL:-https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v${AGENT_SANDBOX_VERSION}/sandbox.yaml}"
-# Content pin for the manifest above, verified by hand on 2026-10-05. A version
-# tag on a GitHub release asset is mutable in principle; the bytes are not.
-MANIFEST_SHA256="${MANIFEST_SHA256:-e89fd95c0aa57609fa24be4112bd52ce67fe8939ecf6f3c17edf2f1e8f1eb860}"
-# The controller image the manifest references, recorded here for the spike
-# record rather than substituted: index digest
-# sha256:28a9cbdbfd6ac0a4e5c7e9261ace1aa30ee2da681cb640dccdfed98e8dd9d98b,
-# multi-arch with linux/arm64 present
-# (raw/spike-01/arm64/07-controller-image-platforms.log).
+# Content pin for the manifest above, read on 2026-11-17 from the downloaded
+# asset itself (207211 bytes) and equal to the digest the releases API reports
+# for it. A version tag on a GitHub release asset is mutable in principle; the
+# bytes are not.
+MANIFEST_SHA256="${MANIFEST_SHA256:-4c54dc1284e9d34e9a00b88de2cb0f098f2dbce4ade814616fd49d44cfd5d1c2}"
+# The controller image the manifest references (by tag,
+# registry.k8s.io/agent-sandbox/agent-sandbox-controller:v1.0.11), recorded
+# here rather than substituted: index digest
+# sha256:73cb162407cddf73f4cd063b02bdee2dac86aa342bbc40bd99a9f023e69b31ed,
+# with linux/amd64 and linux/arm64, resolved 2026-11-17
+# (planning/lab-tests/raw/05-addition/agent-sandbox-repin/04-controller-v1.0.11-imagetools.txt).
 CONTEXT="${CONTEXT:-kind-grid-core}"
 NAMESPACE="${NAMESPACE:-agent-sandbox-system}"
 DEPLOYMENT="${DEPLOYMENT:-agent-sandbox-controller}"
-WORKDIR="${WORKDIR:-/tmp/313-agent-sandbox}"
+# A per-user cache, not a fixed shared /tmp path another local user could
+# create first (review IN-09, phase 5).
+WORKDIR="${WORKDIR:-${XDG_CACHE_HOME:-${HOME}/.cache}/313-k8sai/agent-sandbox}"
 
 kc() { kubectl --context "${CONTEXT}" "$@"; }
 
 fetch_manifest() {
   mkdir -p "${WORKDIR}"
   local f="${WORKDIR}/sandbox-v${AGENT_SANDBOX_VERSION}.yaml"
+  local got
+  # A cached file is trusted only while it still matches the pin. Nothing this
+  # script writes reaches that path unverified (below), so a mismatch there is
+  # a partial download left by an older version of this script, or an edit:
+  # it is deleted and fetched once more rather than blamed on upstream (review
+  # WR-09, phase 5).
+  if [ -s "${f}" ]; then
+    got="$(shasum -a 256 "${f}" | awk '{print $1}')"
+    if [ "${got}" != "${MANIFEST_SHA256}" ]; then
+      echo "==> the cached ${f} does not match its pin; deleting it and downloading again" >&2
+      rm -f "${f}"
+    fi
+  fi
   if [ ! -s "${f}" ]; then
     echo "==> fetching Agent Sandbox v${AGENT_SANDBOX_VERSION} release manifest"
-    curl -fsSL --retry 3 -o "${f}" "${MANIFEST_URL}"
-  fi
-  # Content gate. A release asset that no longer matches its recorded bytes is
-  # a stop, not a warning: this manifest installs a cluster-scoped CRD and a
-  # ClusterRole.
-  local got
-  got="$(shasum -a 256 "${f}" | awk '{print $1}')"
-  if [ "${got}" != "${MANIFEST_SHA256}" ]; then
-    echo "FAIL: ${MANIFEST_URL}" >&2
-    echo "      sha256 ${got}" >&2
-    echo "      expected ${MANIFEST_SHA256}" >&2
-    echo "      The release asset's bytes changed. Re-verify upstream before installing;" >&2
-    echo "      this manifest carries a cluster-scoped CRD and a ClusterRole." >&2
-    exit 1
+    # Into a .part file, moved into place only after the content gate: a curl
+    # that dies part-way (a dropped network, a Ctrl-C) leaves nothing at the
+    # cache path for the next run to trust.
+    rm -f "${f}.part"
+    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 -o "${f}.part" "${MANIFEST_URL}"; then
+      rm -f "${f}.part"
+      echo "FAIL: could not download ${MANIFEST_URL}" >&2
+      echo "      Nothing was cached at ${f}; check the network and re-run." >&2
+      exit 1
+    fi
+    # Content gate. A release asset that no longer matches its recorded bytes
+    # is a stop, not a warning: this manifest installs a cluster-scoped CRD and
+    # a ClusterRole.
+    got="$(shasum -a 256 "${f}.part" | awk '{print $1}')"
+    if [ "${got}" != "${MANIFEST_SHA256}" ]; then
+      rm -f "${f}.part"
+      echo "FAIL: ${MANIFEST_URL}" >&2
+      echo "      sha256 ${got}" >&2
+      echo "      expected ${MANIFEST_SHA256}" >&2
+      echo "      A fresh download does not match the pin, so the release asset's bytes changed." >&2
+      echo "      Re-verify upstream before installing; this manifest carries a cluster-scoped" >&2
+      echo "      CRD and a ClusterRole. Nothing was cached at ${f}." >&2
+      exit 1
+    fi
+    mv "${f}.part" "${f}"
   fi
   echo "${f}"
 }
@@ -196,19 +233,54 @@ while :; do
   esac
 done
 
-echo "==> waiting for the controller rollout"
-if ! kc -n "${NAMESPACE}" rollout status "deploy/${DEPLOYMENT}" --timeout=180s; then
+controller_fail() {
   echo "FAIL: the Agent Sandbox controller did not become available in ${NAMESPACE}." >&2
   echo "      Inspect it with:" >&2
   echo "        kubectl --context ${CONTEXT} -n ${NAMESPACE} describe deploy/${DEPLOYMENT}" >&2
+  echo "        kubectl --context ${CONTEXT} -n ${NAMESPACE} get events --sort-by=.lastTimestamp" >&2
   echo "        kubectl --context ${CONTEXT} -n ${NAMESPACE} logs deploy/${DEPLOYMENT} --tail=50" >&2
   exit 1
+}
+
+# The first wait covers a normal install. On a fresh cluster the kubelet must also pull the
+# controller image from registry.k8s.io, and on a slow link that pull alone has taken minutes
+# (6m35s in one of the course's runs). So when the first wait runs out, read why: a container
+# still waiting on its image gets one longer wait, and anything else fails at once. kubectl's
+# stdout streams as it always did; only the first wait's stderr is held back, and it is printed
+# if the script fails on it.
+ROLLOUT_WAIT_S=180
+PULL_WAIT_S=420
+echo "==> waiting for the controller rollout"
+exec 3>&1
+if ! rollout_err="$( { kc -n "${NAMESPACE}" rollout status "deploy/${DEPLOYMENT}" --timeout="${ROLLOUT_WAIT_S}s" >&3; } 2>&1 )"; then
+  reason="$(kc -n "${NAMESPACE}" get pods \
+              -o jsonpath='{range .items[*]}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null \
+              | awk 'NF { print; exit }')" || reason=""
+  case "${reason}" in
+    ContainerCreating|ErrImagePull|ImagePullBackOff)
+      echo "  the controller is not available after ${ROLLOUT_WAIT_S} s: its container is still waiting (${reason})."
+      echo "  On a fresh cluster this is most often the controller image still being pulled from registry.k8s.io,"
+      echo "  which can take several minutes on a slow link; waiting up to ${PULL_WAIT_S} s more."
+      kc -n "${NAMESPACE}" rollout status "deploy/${DEPLOYMENT}" --timeout="${PULL_WAIT_S}s" || controller_fail
+      ;;
+    *)
+      printf '%s\n' "${rollout_err}" >&2
+      controller_fail
+      ;;
+  esac
+elif [ -n "${rollout_err}" ]; then
+  printf '%s\n' "${rollout_err}" >&2
 fi
+exec 3>&-
 
 # Hard assert the API group version this course puts on screen. If upstream
 # ever serves a second version, the course must say which one it taught.
 SERVED="$(kc get crd sandboxes.agents.x-k8s.io \
             -o jsonpath='{range .spec.versions[*]}{.name}{" "}{end}' | tr -s ' ')"
+# The range writes a space after every version, so the list ends in one. Strip
+# it: the summary line below prints this value, and a learner compares that line
+# with the page's (M11 module walk F5, plan 05-27).
+SERVED="${SERVED% }"
 case "${SERVED}" in
   *v1beta1*) : ;;
   *) echo "FAIL: the Sandbox CRD does not serve v1beta1; it serves: ${SERVED}" >&2
@@ -222,5 +294,8 @@ echo "  controller image    : $(kc -n "${NAMESPACE}" get "deploy/${DEPLOYMENT}" 
                                   -o jsonpath='{.spec.template.spec.containers[0].image}')"
 echo "  extensions group    : $(kc get crd -o name 2>/dev/null \
                                   | grep -c 'extensions.agents.x-k8s.io' || true) CRD(s) present (0 expected -- out of scope here)"
-echo "OK: Agent Sandbox v${AGENT_SANDBOX_VERSION} installed -- controller and the Sandbox CRD on agents.x-k8s.io/${SERVED% }, nothing else."
-echo "next: kubectl --context ${CONTEXT} apply -f labs/sandbox/agent-sandbox/sandbox.yaml"
+echo "OK: Agent Sandbox v${AGENT_SANDBOX_VERSION} installed -- controller and the Sandbox CRD on agents.x-k8s.io/${SERVED}, nothing else."
+# The example Sandbox beside this script, by its absolute path: the publish step
+# strips the source repository's leading labs/, so a relative path that names it
+# is wrong in one of the two trees (deferred row 05-16, plan 05-28).
+echo "next: kubectl --context ${CONTEXT} apply -f $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sandbox.yaml"

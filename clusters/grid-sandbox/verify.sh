@@ -100,8 +100,11 @@ RUNTIMECLASS_FILE="${LABS_DIR}/sandbox/runsc-node/runtimeclass.yaml"
 
 # The substring the sandbox's own kernel reports in /proc/version. The sentry
 # presents a fixed synthetic kernel identity; see spike-01-gvisor.md, where it
-# read `Linux version 4.19.0-gvisor` on BOTH architectures.
-SANDBOX_KERNEL_TOKEN="${SANDBOX_KERNEL_TOKEN:-gvisor}"
+# read `Linux version 4.19.0-gvisor` on BOTH architectures. A CONSTANT, not an
+# environment knob (review IN-03): this is the script's one assertion that is
+# not optional, and an override such as SANDBOX_KERNEL_TOKEN=Linux passed on
+# runc.
+readonly SANDBOX_KERNEL_TOKEN="gvisor"
 
 # Digest-pinned, per PLAT-01, and the same digest the CI arm uses so both arms
 # probe with the identical workload.
@@ -176,10 +179,13 @@ fi
 # this change, or from a node image built before it, fails here too.
 # Captured into a variable and matched with `case`, never `| grep -q`, for the
 # SIGPIPE reason create.sh states. Space-delimited on both sides so a flag is
-# matched whole: `--audit-log-path=-` must not match `--audit-log-path=-x`.
+# matched whole. The log is a FILE on the node, not the API server's stdout
+# (review WR-03: a restart of the node container erased stdout's evidence),
+# so the file is asserted to exist as well.
 APISERVER_POD="kube-apiserver-${CLUSTER_NAME}-control-plane"
 AUDIT_POLICY_FLAG="--audit-policy-file=/etc/kubernetes/policies/audit-policy.yaml"
-AUDIT_LOG_FLAG="--audit-log-path=-"
+AUDIT_LOG_PATH="/var/log/kubernetes/audit/audit.log"
+AUDIT_LOG_FLAG="--audit-log-path=/var/log/kubernetes/audit/audit.log"
 APISERVER_ARGS="$(kc -n kube-system get pod "${APISERVER_POD}" \
                     -o jsonpath='{.spec.containers[0].command[*]}' 2>/dev/null || true)"
 for _flag in "${AUDIT_POLICY_FLAG}" "${AUDIT_LOG_FLAG}"; do
@@ -195,6 +201,13 @@ for _flag in "${AUDIT_POLICY_FLAG}" "${AUDIT_LOG_FLAG}"; do
       ;;
   esac
 done
+if ! docker exec "${CLUSTER_NAME}-control-plane" test -f /var/log/kubernetes/audit/audit.log; then
+  echo "FAIL: the API server's audit log file ${AUDIT_LOG_PATH} is absent on the node" >&2
+  echo "      ${CLUSTER_NAME}-control-plane, though the flag names it. M11 reads its audit evidence there." >&2
+  echo "      Inspect: docker exec ${CLUSTER_NAME}-control-plane ls -l /var/log/kubernetes/audit" >&2
+  echo "      Audit flags are create-time: ${RECREATE}" >&2
+  exit 1
+fi
 
 # --- the runtime is IN THE NODE, proven before any Pod is asked to use it ----
 NODE_CONTAINER="${CLUSTER_NAME}-control-plane"
@@ -220,8 +233,9 @@ RC_HANDLER="$(kc get runtimeclass "${RUNTIME_HANDLER}" -o jsonpath='{.handler}' 
 if [ "${RC_HANDLER}" != "${RUNTIME_HANDLER}" ]; then
   echo "FAIL: RuntimeClass '${RUNTIME_HANDLER}' carries handler '${RC_HANDLER}', expected '${RUNTIME_HANDLER}'." >&2
   echo "      The handler name must match, character for character, the containerd runtime" >&2
-  echo "      stanza the node image registered. A mismatch does not error: containerd falls" >&2
-  echo "      back to the default runtime and the Pod still reaches Running." >&2
+  echo "      stanza the node image registered. A handler containerd does not have is never" >&2
+  echo "      served by another runtime: the Pod waits in ContainerCreating on" >&2
+  echo "      FailedCreatePodSandBox, 'no runtime for \"<handler>\" is configured'." >&2
   echo "      Fix ${RUNTIMECLASS_FILE} and re-run this script." >&2
   exit 1
 fi
@@ -275,8 +289,19 @@ POD_PROC_VERSION="$(kc exec "${PROBE_POD}" -- cat /proc/version 2>&1 || true)"
 POD_UNAME_R="$(kc exec "${PROBE_POD}" -- uname -r 2>&1 || true)"
 NODE_PROC_VERSION="$(docker exec "${NODE_CONTAINER}" cat /proc/version 2>&1 || true)"
 
+# The node's own kernel must NOT carry the token, or the in-Pod read would
+# prove nothing about which kernel served the Pod.
+case "${NODE_PROC_VERSION}" in
+  *"${SANDBOX_KERNEL_TOKEN}"*)
+    echo "FAIL: the node's own /proc/version carries '${SANDBOX_KERNEL_TOKEN}', so the in-Pod read cannot" >&2
+    echo "      tell the sandbox kernel from the node's: ${NODE_PROC_VERSION}" >&2
+    kc delete pod "${PROBE_POD}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    exit 1
+    ;;
+esac
+
 case "${POD_PROC_VERSION}" in
-  *"${SANDBOX_KERNEL_TOKEN}"*|*gVisor*|*GVISOR*) : ;;
+  *"${SANDBOX_KERNEL_TOKEN}"*) : ;;
   *)
     echo "FAIL: /proc/version read from INSIDE the probe Pod reports:" >&2
     echo "        ${POD_PROC_VERSION}" >&2
@@ -302,7 +327,7 @@ echo "OK: grid-sandbox verified at SIZE=${SIZE} — ${NODE_COUNT}/${EXPECTED_NOD
 echo "  /proc/version in-Pod:  ${POD_PROC_VERSION}"
 echo "  /proc/version on node: ${NODE_PROC_VERSION}"
 echo "  node image in use:     ${NODE_IMAGE_IN_USE}"
-echo "  audit log:  kubectl --context ${CONTEXT} -n kube-system logs ${APISERVER_POD}   (Metadata level, M11's namespaces and groups)"
+echo "  audit log:  docker exec ${CLUSTER_NAME}-control-plane cat ${AUDIT_LOG_PATH}   (Metadata level, M11's namespaces and groups)"
 echo "  context:    ${CONTEXT}"
 echo "  kubeconfig: ${KUBECONFIG}"
 echo "  size:       SIZE=${SIZE} -> 1 control-plane + ${WORKER_NODES} worker(s), read back from the cluster"

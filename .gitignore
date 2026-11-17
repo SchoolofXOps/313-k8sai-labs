@@ -1,0 +1,6 @@
+# Published to the root of the public labs repository by scripts/sync-grid.mjs.
+#
+# The M3 deep dive and the M4 and M11 labs write the evidence they collect into
+# evidence/ at the root of your clone, outside grid-platform/. It records what
+# you read along the way and is never part of your platform, so git ignores it.
+/evidence/

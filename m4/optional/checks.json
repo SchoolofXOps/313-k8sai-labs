@@ -1,0 +1,60 @@
+{
+  "_why": "M4's OPTIONAL lab end state (plan 05-41, MOD-17), read after the fill step and before Teardown. SIMULATED: the control plane, the kubelet, the webhook, the scheduler extender and its bookkeeping are real software on a real kind cluster; every device is a mock device served by Mokka's mock NVML library, and nothing runs CUDA, so no HAMi cap is enforced and none is asserted. Object state only (TRUST-06): schedulerName, the PodScheduled condition, HAMi's allocation annotation, the container's environment and the node's allocatable. No number is read as performance. Every kubectl sets KUBECONFIG and --context kind-grid-core itself. The vendor resource names appear nowhere in this file (STANDARDS.md C23 clause 8): the slot resource is selected by its /gpu suffix. Paths are relative to the learner tree; in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m4/optional/checks.json).",
+  "truth_contract": "SIMULATED",
+  "checks": [
+    {
+      "id": "share-routed-to-extender",
+      "describe": "Pod share-one was routed to HAMi's scheduler by the mutating webhook (spec.schedulerName rewritten to hami-scheduler) and its PodScheduled condition is True. The webhook fails open, so a Pod created before it answered would carry the default scheduler and stay Pending; the page gates on a server-side dry run first (SPIKE-10 superseded run 1). Object state, never the phase",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-hami get pod share-one -o json | jq -r '\"scheduler=\" + .spec.schedulerName + \" scheduled=\" + ([.status.conditions[]? | select(.type == \"PodScheduled\") | .status] | first // \"none\")'",
+      "assert": {
+        "matches": "^scheduler=hami-scheduler scheduled=True$"
+      }
+    },
+    {
+      "id": "share-allocation-annotation",
+      "describe": "Pod share-one carries the extender's allocation annotation hami.io/vgpu-devices-allocated, recording exactly what it asked for: one mock device's UUID, 4096 MiB and 30 core-percent. The vendor field is matched as any word, so the vendor name is not spelled here. The annotation is HAMi's accounting; nothing here runs CUDA, so it records a share and enforces nothing",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-hami get pod share-one -o json | jq -r '\"alloc=\" + (.metadata.annotations[\"hami.io/vgpu-devices-allocated\"] // \"none\")'",
+      "assert": {
+        "matches": "^alloc=GPU-[0-9a-f-]{36},[A-Za-z]+,4096,30:;$"
+      }
+    },
+    {
+      "id": "share-cap-is-env-only",
+      "describe": "inside share-one the cap exists only as HAMi's two environment variables, and there is no /etc/ld.so.preload: with CUDA_DISABLE_CONTROL=true the v2.11.0 device plugin does not mount the file that would load HAMi-core. This is the page's cannot-show statement as object state: nothing here runs CUDA and HAMi-core is not loaded, so no cap is enforced",
+      "weight": 1,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-hami exec share-one -- sh -c 'printf \"limit_vars=%s preload=%s\\n\" \"$(env | grep -cE \"^CUDA_DEVICE_(MEMORY_LIMIT_0|SM_LIMIT)=\")\" \"$(if [ -e /etc/ld.so.preload ]; then echo present; else echo absent; fi)\"'",
+      "assert": {
+        "matches": "^limit_vars=2 preload=absent$"
+      }
+    },
+    {
+      "id": "policy-binpack-one-device",
+      "describe": "the three Pods created one at a time with the per-Pod annotation hami.io/gpu-scheduler-policy=binpack are each bound (PodScheduled True) with an allocation, and all three name the same mock device: binpack puts a Pod on the most-used device that still fits. An annotation alone is not a placement: HAMi writes it at filter time, before the bind, and run 1 showed a Pod annotated and never bound (node-lock contention). Placement by HAMi's accounting on identical, idle mock devices; nothing is read as performance",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-hami get pods -l policy=binpack -o json | jq -r '[.items[] | {s: ([.status.conditions[]? | select(.type == \"PodScheduled\") | .status] | first // \"none\"), d: ((.metadata.annotations[\"hami.io/vgpu-devices-allocated\"] // \"\") | split(\",\")[0])}] as $p | ([$p[] | select(.s == \"True\" and (.d | startswith(\"GPU-\"))) | .d]) as $a | \"pods=\\($p | length) placed=\\($a | length) devices=\\($a | unique | length)\"'",
+      "assert": {
+        "matches": "^pods=3 placed=3 devices=1$"
+      }
+    },
+    {
+      "id": "policy-spread-three-devices",
+      "describe": "the three Pods created one at a time with hami.io/gpu-scheduler-policy=spread are each bound (PodScheduled True) with an allocation, on three different mock devices: spread puts a Pod on the least-used device that fits. Annotation and bind are both required, as for binpack. Only the per-device (GPU) policy can show a change on one worker; the node policy decides nothing here",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-hami get pods -l policy=spread -o json | jq -r '[.items[] | {s: ([.status.conditions[]? | select(.type == \"PodScheduled\") | .status] | first // \"none\"), d: ((.metadata.annotations[\"hami.io/vgpu-devices-allocated\"] // \"\") | split(\",\")[0])}] as $p | ([$p[] | select(.s == \"True\" and (.d | startswith(\"GPU-\"))) | .d]) as $a | \"pods=\\($p | length) placed=\\($a | length) devices=\\($a | unique | length)\"'",
+      "assert": {
+        "matches": "^pods=3 placed=3 devices=3$"
+      }
+    },
+    {
+      "id": "fill-pending-on-memory-with-slots-free",
+      "describe": "the deliberate failure: at least one fill Pod was scheduled, then exactly one fill Pod's PodScheduled condition is False, Unschedulable, and its message names CardInsufficientMemory, while the worker's allocatable for the resource whose name ends in /gpu is still larger than the slots the scheduled Pods hold. Memory ran out, not count. Read from the condition, never the phase; the resource is selected by its suffix and never spelled (C23 clause 8)",
+      "weight": 3,
+      "run": "P=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-hami get pods -o json) && N=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get node grid-core-worker -o json) && jq -rn --argjson p \"$P\" --argjson n \"$N\" 'def sched: ([.status.conditions[]? | select(.type == \"PodScheduled\")] | first // {}); def slots: ([.spec.containers[].resources.limits // {} | to_entries[] | select(.key | endswith(\"/gpu\")) | .value | tonumber] | add // 0); [$p.items[] | select(.metadata.labels.part == \"fill\")] as $f | [$f[] | select(sched.status == \"False\")] as $pend | ([$n.status.allocatable // {} | to_entries[] | select(.key | endswith(\"/gpu\")) | .value | tonumber] | first // 0) as $alloc | ([$p.items[] | select(sched.status == \"True\") | slots] | add // 0) as $used | \"fill_scheduled=\\([$f[] | select(sched.status == \"True\")] | length > 0) pending=\\($pend | length) reason=\\(($pend[0] | sched.reason) // \"none\") memory_named=\\(($pend[0] | sched.message // \"\") | test(\"CardInsufficientMemory\")) slots_free=\\($alloc - $used > 0)\"'",
+      "assert": {
+        "matches": "^fill_scheduled=true pending=1 reason=Unschedulable memory_named=true slots_free=true$"
+      }
+    }
+  ]
+}

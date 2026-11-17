@@ -35,6 +35,7 @@ leaves the cluster standing; the base profile's `teardown.sh` deletes the cluste
 | Path | What it adds |
 |---|---|
 | `clusters/grid-core/addons/dra/` | Synthetic devices via the upstream DRA example driver, with the device-health path |
+| `clusters/grid-core/addons/nvml-mock/` | Mock devices served by a mock NVML library (Mokka nvml-mock 0.7.0), read by the unmodified vendor device plugin and dcgm-exporter. No accelerator is present and nothing here measures one. Its `teardown.sh` reads the worker's containerd back and reports what it finds |
 | `clusters/grid-core/addons/kueue-kwok/` | Kueue quota and gang admission (`kueue.x-k8s.io/v1beta2`), against a KWOK-simulated fleet joined to the real scheduler |
 | `clusters/grid-core/addons/dataplane/` | The storage and data-path harness |
 | `clusters/grid-core/addons/serving/` | The inference simulator and the prefix-cache-aware router. **Requires `SIZE=16`** — at `SIZE=8` it reports its fence and applies nothing, and points you at a read-along instead |
@@ -59,8 +60,8 @@ repository's root, like everything else here.
 | `m1/` | Module 1's lab: the namespace, simulator, client, HPA and metrics-server manifests, the load script, and the lab's checks files |
 | `m2/` | Module 2's lab: the sizing calculators, the input files they read, and the lab's checks files. They are plain shell arithmetic and need no cluster |
 | `m3/` | Module 3's lab: `kar-list.sh`, which lists the Kubernetes AI Conformance requirements from a pinned commit and reads nothing from your cluster, and the lab's checks files |
-| `m4/` | Module 4's lab: the DeviceClass, ResourceClaim and Pod manifests for the synthetic devices the DRA example driver publishes, the device-health and XID evidence inputs, the image pin register `PINS.md`, and the lab's checks files |
-| `m11/` | Module 11's lab: the sandboxed and plain probe Pods with their probe script, the MCP tool server and its client, the scripted actor and its RBAC, the egress policies, and the lab's checks files. It runs on the `clusters/grid-sandbox/` profile |
+| `m4/` | Module 4's lab: the DeviceClass, ResourceClaim and Pod manifests for the synthetic devices the DRA example driver publishes, the device-health and XID evidence inputs, the Pods that request the vendor device plugin's resource on mock devices, the image pin register `PINS.md`, and the lab's checks files. `m4/optional/` is the optional lab's HAMi install, values and Pods, on mock devices and never part of the core path |
+| `m11/` | Module 11's lab: the sandboxed and plain probe Pods with their probe script, the MCP tool server and its client, the scripted actor and its RBAC, the egress policies, the Sandbox the lab suspends and resumes, and the lab's checks files. It runs on the `clusters/grid-sandbox/` profile |
 | `tools/xray/` | Cluster X-Ray, a live view of your own cluster in the browser: `bash tools/xray/serve.sh`. Its `README.md` says what each lens shows |
 
 ## Shared helpers
@@ -80,6 +81,9 @@ The course has a **Truth Contract**, and these assets are written to it:
 - **A synthetic device is never called a GPU.** The upstream DRA example driver names its devices
   `gpu-0` and advertises `model: LATEST-GPU-MODEL` with an 80Gi "memory" capacity. None of that is a
   GPU or memory on any device. Where the driver's own output appears, it is captioned as synthetic.
+- **A mock device is a mock.** The mock NVML layer answers every consumer with a vendor product name,
+  a driver version, device UUIDs and memory sizes that describe no hardware on your machine. Where
+  that output appears, it is captioned as mock.
 - **No measured number appears without the environment it was measured in.**
 - **The simulator is a simulator.** Results from the serving layer are *modelled* or *demonstrated*,
   never *measured* as real model performance.

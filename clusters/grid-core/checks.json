@@ -5,7 +5,7 @@
       "id": "nodes-match-requested-size",
       "describe": "the node count READ FROM THE CLUSTER equals 1 control-plane + lab.sizes.<SIZE>.worker_nodes REAL NODES ONLY, and the selector is load-bearing: MEASURED 2026-10-14, CI run 38491797177 and reproduced locally, this profile's verify.sh read ELEVEN nodes against an expected two with the queueing layer applied, because addon-kueue-kwok adds nine SIMULATED Node objects. A simulated node is not a machine, it carries no kubelet, and nothing on it is a GPU. `-l '!type'` is this project's existing idiom for the distinction — addons/kueue-kwok/verify.sh already selects real nodes with `!type` and the fleet with `type=kwok`, and labs/kwok/attach/setup.sh is what applies the label. A learner who applies that layer and then runs this profile's checks would otherwise get a red check with no explanation, and the layer's own checks file is what counts the fleet. The count is also now required NON-ZERO rather than merely equal to itself: the old backreference was satisfied by got=0 want=0, which is a cluster with no nodes at all agreeing with a size that expects none.",
       "weight": 2,
-      "run": "cd \"$(git rev-parse --show-toplevel)\" && bash -c 'set -eu; export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; . labs/tools/size-gate.sh; assert_size; want=$((1 + $(size_value worker_nodes))); got=$(kubectl --context kind-grid-core get nodes -l \"!type\" --no-headers | wc -l | tr -d \" \"); sim=$(kubectl --context kind-grid-core get nodes -l type=kwok --no-headers 2>/dev/null | wc -l | tr -d \" \"); printf \"node-count got=%s want=%s simulated-excluded=%s\\n\" \"$got\" \"$want\" \"$sim\"'",
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && bash -c 'set -eu; export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; t=tools/size-gate.sh; [ -f \"$t\" ] || t=labs/$t; . \"./$t\"; assert_size; want=$((1 + $(size_value worker_nodes))); got=$(kubectl --context kind-grid-core get nodes -l \"!type\" --no-headers | wc -l | tr -d \" \"); sim=$(kubectl --context kind-grid-core get nodes -l type=kwok --no-headers 2>/dev/null | wc -l | tr -d \" \"); printf \"node-count got=%s want=%s simulated-excluded=%s\\n\" \"$got\" \"$want\" \"$sim\"'",
       "assert": {
         "matches": "^node-count got=([1-9][0-9]*) want=\\1 simulated-excluded=[0-9]+$"
       }
@@ -72,7 +72,7 @@
     {
       "id": "size-gate-helper-end-to-end",
       "describe": "THE SIZE-CONDITIONAL ENTRY. The second worker exists only at SIZE=16, so at SIZE=8 the helper prints the fixed skip token and exits 0 and the alternation matches that instead. This is the one entry that exercises labs/tools/size-gate.sh end to end from a checks file",
-      "run": "cd \"$(git rev-parse --show-toplevel)\" && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash labs/tools/size-gate.sh 16 -- kubectl --context kind-grid-core get node grid-core-worker2 -o name",
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && t=tools/size-gate.sh && { [ -f \"$t\" ] || t=labs/$t; } && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash \"$t\" 16 -- kubectl --context kind-grid-core get node grid-core-worker2 -o name",
       "assert": {
         "matches": "^node/grid-core-worker2$|^SIZE-GATE: skipped"
       }
@@ -81,7 +81,7 @@
       "id": "pinned-images-are-multi-architecture",
       "describe": "THE ONE NETWORK-DEPENDENT CHECK IN THIS FILE, stated here so a reader debugging an offline failure does not have to find it by elimination. Every other entry reads the cluster or the local image store; this one reads each pinned image's manifest list out of its registry, which needs network access and roughly a minute of metadata round-trips. It asserts the PLATFORM LIST and is deliberately separate from the digest FORM, which STANDARDS.md C17 asserts statically with no network at all: one index digest has to resolve on an arm64 laptop and on an amd64 runner, and C17 only says the reference names an index, never that the index carries both. The helper reports a single-platform manifest as a finding naming the architecture it lacks, and PLATFORM_CHECK_SELFTEST=1 proves that bites against the one image in this project's set that genuinely ships amd64 only",
       "weight": 2,
-      "run": "cd \"$(git rev-parse --show-toplevel)\" && bash labs/tools/platform-check.sh",
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && t=tools/platform-check.sh && { [ -f \"$t\" ] || t=labs/$t; } && bash \"$t\"",
       "assert": {
         "matches": "^OK: [0-9]+ pinned image\\(s\\) checked"
       }

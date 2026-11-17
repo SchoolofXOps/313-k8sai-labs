@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sim-router — llm-d-inference-sim + llm-d-router Standalone Mode, bring-up
+# sim-router — llm-d-inference-sim v1.2.0 + llm-d-router v1.0.0 Standalone Mode, bring-up
 #
 # Purpose: stand up the prefix-cache-aware routing loop on the grid-core
 # profile, switch between three routing policies, and replay a fixed request set
@@ -74,13 +74,18 @@ export KUBECONFIG="${KUBECONFIG:-/tmp/grid-core.kubeconfig}"
 
 # Digest-pinned image set. Defaults MUST equal the digests in the manifests;
 # assert_manifest_pins() fails loudly if an edit ever moves one and not the
-# other. Digests for the two llm-d images come from Spike 0
-# (planning/lab-tests/spike-00-preflight.md); the render and envoy digests were
-# resolved by plan 01-04 (planning/lab-tests/raw/spike-03/digests-extra.log).
+# other. Digests for the two llm-d images were re-resolved by plan 05-31 at
+# llm-d-inference-sim v1.2.0 and llm-d-router-endpoint-picker v1.0.0, and each
+# is recorded once as a PIN line in
+# planning/lab-tests/05-addition-version-reads.md (they replaced the v0.11.x
+# digests Spike 0 resolved, planning/lab-tests/spike-00-preflight.md). The
+# render and envoy digests were resolved by plan 01-04
+# (planning/lab-tests/raw/spike-03/digests-extra.log) and are KEPT, because the
+# upstream files at the new tags still name the same render and envoy tags.
 # Every one is a multi-arch INDEX digest, so the same pin works on arm64 (this
 # host) and amd64.
-SIM_IMAGE="${SIM_IMAGE:-ghcr.io/llm-d/llm-d-inference-sim@sha256:32144df791330a0006b747edfdf2b114a0fe728e023a9d1b3463eeb48d32abb9}"
-ROUTER_IMAGE="${ROUTER_IMAGE:-ghcr.io/llm-d/llm-d-router-endpoint-picker@sha256:39257d24552d16d8f215d3de25cc734fd44af3b282b67032db01aff900c610cf}"
+SIM_IMAGE="${SIM_IMAGE:-ghcr.io/llm-d/llm-d-inference-sim@sha256:9992453829c0dea8d120b8e0322bb0e4237cbb3c6d9ea3bdce060410c40c91c9}"
+ROUTER_IMAGE="${ROUTER_IMAGE:-ghcr.io/llm-d/llm-d-router-endpoint-picker@sha256:024188e998f516879f68532016ca24fabca00afbdcc2af9a61b17634e197df2c}"
 RENDER_IMAGE="${RENDER_IMAGE:-vllm/vllm-openai-cpu@sha256:fc78b363009faa519a0adb5f1a287a533a922970f4463e73c00053a4aa2136e8}"
 ENVOY_IMAGE="${ENVOY_IMAGE:-envoyproxy/envoy@sha256:85500e28ed088ec39ff0adc1be3d358a8ad062926aaa62c36b28bde00919e4e8}"
 
@@ -202,7 +207,10 @@ cmd_up() {
   # costs minutes of the cold budget while the render container finishes its own
   # (much slower) start. Measured live: 3 restarts per simulator before this
   # ordering was introduced — see
-  # planning/lab-tests/raw/spike-03/05-setup-attempt1.log.
+  # planning/lab-tests/raw/spike-03/05-setup-attempt1.log. Still true at v1.2.0:
+  # plan 05-31 ran the pinned simulator with this profile's exact flags and no
+  # render service reachable, and it exited with the same "failed to initialize
+  # random dataset: RenderRequest" error (planning/lab-tests/05-addition-version-reads.md).
   #
   # Applying render alone first does serialize its image pull ahead of the other
   # three, but those three are small (a Go binary, a Go binary and Envoy) next to
@@ -243,6 +251,34 @@ current_policy() {
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="POLICY")].value}' 2>/dev/null
 }
 
+# A finished rollout does NOT mean the old router has stopped routing. The
+# rollout reports complete while the PREVIOUS router pod is still terminating,
+# and llm-d-router v1.0.0 keeps answering the requests that reach it while it
+# drains: its health check reports NOT_SERVING with draining=true, yet it still
+# picks endpoints. The data plane holds a long-lived HTTP/2 connection to the
+# router Service, pinned to whichever router pod it first reached, so until the
+# old pod exits a request can be routed by the OLD policy. Measured in SPIKE-08
+# (planning/lab-tests/raw/spike-08/superseded/run-a-1/diagnosis/): the draining
+# prefix-cache router served 9 requests labelled round-robin and 2 labelled
+# load-aware, and one prefix-cache request went to the draining round-robin
+# router. So a switch is complete only when exactly ONE router pod exists and it
+# carries the requested policy.
+wait_one_router() {
+  local want="$1" i n pol
+  for i in $(seq 1 90); do
+    n="$(kcn get pods -l app=sim-router-epp --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)"
+    if [ "${n}" = "1" ]; then
+      pol="$(kcn get pods -l app=sim-router-epp \
+             -o jsonpath='{.items[0].spec.containers[0].env[?(@.name=="POLICY")].value}' 2>/dev/null || true)"
+      if [ "${pol}" = "${want}" ]; then
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  fail "after 180 s there are ${n} router pod(s) and the live one carries policy '${pol:-?}', not '${want}'. A draining router still routes, so no measurement may start. Inspect: kubectl --context ${CONTEXT} -n ${NAMESPACE} get pods -l app=sim-router-epp"
+}
+
 cmd_policy() {
   local p="$1" valid=0 known
   for known in round-robin load-aware prefix-cache; do
@@ -255,6 +291,7 @@ cmd_policy() {
   # measurements comparable: same endpoints, same input, different policy.
   kcn set env deploy/sim-router-epp "POLICY=${p}" >/dev/null
   kcn rollout status deploy/sim-router-epp --timeout=300s >/dev/null
+  wait_one_router "${p}"
   echo "OK: live policy is now '${p}' (router restarted; simulator fleet untouched)"
   # The router's block index is rebuilt from scratch on restart, so anything it
   # knew about cache residency is gone. State that rather than let a reader
@@ -378,11 +415,18 @@ if mode == "observe":
 # The router's own KV-block index counters, read from its Prometheus endpoint.
 #
 # THIS is the ground truth for "did the scorer consume the ZMQ events", and the
-# only signal that cannot be produced by a router that is not consuming them:
-#   kvcache_index_admissions_total      blocks admitted from BlockStored events
-#   kvcache_index_evictions_total       blocks dropped from BlockRemoved events
-#   kvcache_index_lookup_requests_total prefix lookups performed while routing
-#   kvcache_index_lookup_hits_total     lookups that matched a resident block
+# only signal that cannot be produced by a router that is not consuming them.
+# Names as docs/metrics.md lists them at llm-d-router v1.0.0 (§ "KV-cache
+# index"); v1.0.0 removed the short alias names SPIKE-03 read on v0.11.0, and
+# STANDARDS.md C9 refuses them:
+#   llm_d_epp_kv_cache_index_admissions_total       blocks admitted to the index
+#   llm_d_epp_kv_cache_index_evictions_total        blocks evicted from the index
+#   llm_d_epp_kv_cache_index_lookup_requests_total  index lookups performed
+#   llm_d_epp_kv_cache_index_lookup_hits_total      contiguous prefix blocks
+#                                                   matched by the best pod
+# The last one's meaning is v1.0.0's wording, which is narrower than "lookups
+# that matched": it counts BLOCKS on the best pod, not lookups. All four are
+# registered only with `enableMetrics: true` in the prefix-cache policy.
 #
 # Read these rather than the EPP's logs: the per-pod subscriber's refused dials
 # spam ERROR lines continuously while the bound socket ingests normally, so the
@@ -391,7 +435,7 @@ index_counters() {
   local label="$1" out
   start_forward "svc/sim-router-epp" 19090 9090 >/dev/null 2>&1 || true
   out="$(curl -s --max-time 10 "http://127.0.0.1:${FWD_PORT}/metrics" 2>/dev/null \
-         | grep -E '^kvcache_index_(admissions|evictions|lookup_requests|lookup_hits)_total' || true)"
+         | grep -E '^llm_d_epp_kv_cache_index_(admissions|evictions|lookup_requests|lookup_hits)_total' || true)"
   stop_forward
   if [ -z "${out}" ]; then
     echo "  index[${label}]: unreadable (no counters scraped from :9090)"

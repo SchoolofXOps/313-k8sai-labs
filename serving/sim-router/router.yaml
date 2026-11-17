@@ -1,4 +1,4 @@
-# sim-router — llm-d-router v0.11.0 Endpoint Picker, STANDALONE MODE
+# sim-router — llm-d-router v1.0.0 Endpoint Picker, STANDALONE MODE
 #
 # Purpose: the routing brain. Subscribes to the simulators' ZMQ KV-cache events,
 # maintains a block index keyed by pod, and answers Envoy's ext-proc call with
@@ -16,8 +16,16 @@
 #
 #   The Envoy that fronts it is supplied by envoy.yaml in this directory and
 #   managed by this lab, not by a gateway controller reconciling a Gateway
-#   object. That is what "self-managed Envoy" means and it is why the whole loop
-#   fits an 8 GB budget.
+#   object. That is what "self-managed Envoy" means. Whether the whole loop
+#   fits an 8 GB budget is SPIKE-08's question on this pin (plan 05-32): the
+#   v0.11.x profile measured 5227 MiB against 4500 MiB, and that result does not
+#   carry over to v1.0.0 by inference.
+#
+#   Standalone Mode is still documented at v1.0.0 (README.md § "1. Standalone
+#   Mode"). v1.0.0 added a FAIL-OPEN default to its standalone Helm chart
+#   (`router.proxy.failOpen: true`, which sets Envoy's ext_proc
+#   `failure_mode_allow: true`). This lab does not use that chart, and its
+#   envoy.yaml fails CLOSED on purpose — see the note on the ext_proc filter.
 #
 # ZMQ direction: this component BINDS the SUB socket (tcp://0.0.0.0:5557 in the
 # prefix-cache policy below) and the simulators DIAL it. The Service exposes
@@ -30,9 +38,19 @@
 # re-deploys the fleet, which is what makes the three measurements comparable:
 # the simulators are the same pods throughout.
 #
-# Image: ghcr.io/llm-d/llm-d-router-endpoint-picker v0.11.0, index digest
-# resolved by Spike 0. NOTE the repository name: the image is
-# `llm-d-router-endpoint-picker`, NOT `llm-d-router` — the latter returns 403.
+# Image: ghcr.io/llm-d/llm-d-router-endpoint-picker v1.0.0 (released
+# 2026-10-16), index digest resolved by plan 05-31 with `docker buildx
+# imagetools inspect` and recorded as a PIN line in
+# planning/lab-tests/05-addition-version-reads.md, multi-arch linux/amd64 +
+# linux/arm64. Re-pinned from v0.11.0 by D-57. NOTE the repository name: the
+# image is `llm-d-router-endpoint-picker`, NOT `llm-d-router` — the latter still
+# answers 403 at v1.0.0 (re-read 2026-11-17, same record).
+#
+# The configuration API: every EndpointPickerConfig below is
+# `apiVersion: llm-d.ai/v1`, the version apix/config/v1 declares at the v1.0.0
+# tag (`+groupName=llm-d.ai`, kind `EndpointPickerConfig`). Every plugin type
+# named below is registered at v1.0.0 as Beta or Stable in
+# cmd/epp/runner/runner.go, so none needs --allow-experimental-plugins.
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -51,7 +69,10 @@ rules:
   # The ENTIRE permission set the CRD-free standalone path needs. Compare with
   # the InferencePool path, which additionally wants get/watch/list on
   # inference.networking.k8s.io inferencepools plus llm-d.ai inferenceobjectives
-  # and inferencemodelrewrites. None of those CRDs is installed here.
+  # (served at llm-d.ai/v1 since v1.0.0) and inferencemodelrewrites. v1.0.0 also
+  # REMOVED the legacy experimental pool group, so `inference.networking.k8s.io`
+  # is now the only pool group the picker accepts. None of those CRDs is
+  # installed here, and nothing in this profile names either pool group.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "watch", "list"]
@@ -87,7 +108,7 @@ data:
   # this one, the prefix-cache scorer is doing nothing.
   # ---------------------------------------------------------------------------
   round-robin.yaml: |
-    apiVersion: llm-d.ai/v1alpha1
+    apiVersion: llm-d.ai/v1
     kind: EndpointPickerConfig
     plugins:
     - type: single-profile-handler
@@ -111,7 +132,7 @@ data:
   # which pod holds the prefix.
   # ---------------------------------------------------------------------------
   load-aware.yaml: |
-    apiVersion: llm-d.ai/v1alpha1
+    apiVersion: llm-d.ai/v1
     kind: EndpointPickerConfig
     plugins:
     - type: single-profile-handler
@@ -175,20 +196,24 @@ data:
   # whose error output actively misleads.
   #
   #   `zmqEndpoint: tcp://0.0.0.0:5557` is a BIND address. The producer's kvevents
-  #   pool LISTENS there, and llm-d-inference-sim's publisher DIALS it: the
-  #   simulator calls socket.Dial() unconditionally with
-  #   WithDialerMaxRetries(-1), so it only ever connects out and never listens.
-  #   (The simulator's own doc comment claims "endpoint is the ZMQ address to
-  #   bind to", which contradicts the code directly beneath it. Believe the code.)
-  #   This is the direction sim.yaml's --zmq-endpoint=tcp://sim-router-epp:5557
-  #   assumes, and it WORKS.
+  #   pool LISTENS there, and llm-d-inference-sim's publisher DIALS it. On
+  #   v0.11.2 the simulator called socket.Dial() unconditionally; since v0.12.0
+  #   it is "hybrid" and BINDS only a passive address ("*", "::", inproc://,
+  #   ipc://), dialling everything else (docs/kv-cache.md at v1.2.0). sim.yaml's
+  #   --zmq-endpoint=tcp://sim-router-epp:5557 is a host:port, so v1.2.0 still
+  #   dials it — its own startup log said "ZMQ publisher dialing" for exactly
+  #   that flag on this host (planning/lab-tests/05-addition-version-reads.md).
+  #   It worked on v0.11.x; SPIKE-08 is what says it works on this pin.
   #
   #   SEPARATELY, and confusingly, the EPP also maintains a PER-POD subscriber
   #   that DIALS OUT to every discovered model server at tcp://<podIP>:5557,
   #   expecting the server to be listening — which is correct for real vLLM,
-  #   whose KV-event publisher binds, and wrong for this simulator, which does
-  #   not. Those dials are refused forever, at ERROR severity, roughly one line
-  #   per pod per second:
+  #   whose KV-event publisher binds, and wrong for this simulator as it is
+  #   configured here, which dials instead. (A passive --zmq-endpoint would now
+  #   make the simulator bind, which could silence this loop; that changes the
+  #   wiring SPIKE-03 measured and is left for SPIKE-08 to decide, not changed
+  #   here.) On v0.11.x those dials were refused forever, at ERROR severity,
+  #   roughly one line per pod per second:
   #     ERROR zmq-subscriber "Failed to connect subscriber socket"
   #           endpoint="tcp://10.244.1.10:5557" error="... connection refused"
   #
@@ -201,17 +226,30 @@ data:
   #   was happening at the same time.
   #
   #   Never diagnose this path from its logs. Read the router's own index
-  #   counters on :9090 instead — kvcache_index_admissions_total,
-  #   kvcache_index_evictions_total, kvcache_index_lookup_hits_total. Those are
-  #   the ground truth for "did the scorer consume the events", and they are what
-  #   SPIKE-03's verdict rests on.
+  #   counters on :9090 instead — llm_d_epp_kv_cache_index_admissions_total,
+  #   llm_d_epp_kv_cache_index_evictions_total and
+  #   llm_d_epp_kv_cache_index_lookup_hits_total, the names docs/metrics.md
+  #   lists at v1.0.0 (§ "KV-cache index"). v1.0.0 removed the short alias names
+  #   SPIKE-03 read on v0.11.0; STANDARDS.md C9 now refuses them. These counters
+  #   are the ground truth for "did the scorer consume the events", and they are
+  #   what SPIKE-03's verdict rested on and SPIKE-08's will.
   #
   # There is deliberately no `dataLayer:` block: this policy mirrors upstream's
-  # deploy/config/sim-epp-kvcache-config.yaml, the config llm-d-router ships FOR
-  # THIS SIMULATOR, which carries none. Only the model name and render URL differ.
+  # deploy/config/sim-epp-kvcache-config.yaml at v1.0.0, the config
+  # llm-d-router ships FOR THIS SIMULATOR, which carries none. Against its
+  # v0.11.0 form that file changed only its apiVersion (to llm-d.ai/v1) and
+  # templated its model name. This copy differs from it in three values: the
+  # model name, the render URL (upstream substitutes both at deploy time) and
+  # `enableMetrics: true` (upstream ships false), which is what turns on the
+  # index counters named above.
+  #
+  # v1.0.0 also validates at startup that `precise-prefix-cache-producer` is
+  # not fed by an estimate-backed token-producer (release notes, #1529). The
+  # `vllm:` backend below satisfies that; deleting it would now fail the
+  # rollout instead of silently matching nothing.
   # ---------------------------------------------------------------------------
   prefix-cache.yaml: |
-    apiVersion: llm-d.ai/v1alpha1
+    apiVersion: llm-d.ai/v1
     kind: EndpointPickerConfig
     plugins:
     - type: token-producer
@@ -264,7 +302,7 @@ spec:
       serviceAccountName: sim-router-epp
       containers:
         - name: epp
-          image: ghcr.io/llm-d/llm-d-router-endpoint-picker@sha256:39257d24552d16d8f215d3de25cc734fd44af3b282b67032db01aff900c610cf
+          image: ghcr.io/llm-d/llm-d-router-endpoint-picker@sha256:024188e998f516879f68532016ca24fabca00afbdcc2af9a61b17634e197df2c
           imagePullPolicy: IfNotPresent
           args:
             # --- CRD-free endpoint discovery (Standalone Mode) ----------------
@@ -351,7 +389,9 @@ spec:
           # Set the limit from the MEASURED peak, not an estimate:
           #   sim-router-epp measured 31 MiB
           # (planning/lab-tests/spike-05-rss.md, per-pod cgroup v2
-          # memory.peak read inside the worker). Add headroom deliberately;
+          # memory.peak read inside the worker). That figure is v0.11.0's;
+          # SPIKE-08 re-measures it on this v1.0.0 pin, and the limit is set
+          # from THAT reading, never from this one. Add headroom deliberately;
           # the instrument's own run-to-run variance was +/-522 MiB.
           resources:
             requests:

@@ -1,8 +1,8 @@
 # labs/m11/dd-reap-demo.yaml — deep dive: a Sandbox that deletes itself at a set time
 #
 # spec.shutdownTime is an RFC 3339 instant. When it passes, the controller acts
-# on spec.shutdownPolicy, an enum read from the v1.0.5 CRD schema
-# (Delete | Retain, default Retain). With Delete the Sandbox object is deleted,
+# on spec.shutdownPolicy, an enum read from the v1.0.11 CRD schema
+# (Delete | Retain, default Retain; unchanged since v1.0.5). With Delete the Sandbox object is deleted,
 # and its Pod goes with it through the Pod's ownerReferences. The schema carries
 # no field descriptions, so what Retain does to the Pod is not stated here; the
 # deep dive runs Delete only.

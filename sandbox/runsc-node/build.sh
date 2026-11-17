@@ -80,6 +80,12 @@ BASE_DIGEST="${BASE_DIGEST:-sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620
 GVISOR_RELEASE="${GVISOR_RELEASE:-release-20260928.0}"
 
 PROFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The labs tree this script sits in, two levels up: labs/ in the course's source
+# repository, the clone's root in a learner's clone. The next: hint at the end
+# names the profile by this absolute path, because the publish step strips the
+# leading labs/ and a relative path is wrong in one of the two trees (deferred
+# row 05-16, plan 05-28).
+LABS_DIR="$(cd "${PROFILE_DIR}/../.." && pwd)"
 OUT_DIR="${OUT_DIR:-/tmp/313-grid-sandbox-node-oci}"
 
 # --- pinned-binary resolution -------------------------------------------------
@@ -240,7 +246,8 @@ esac
 if ! docker run --rm --entrypoint grep "${IMAGE}:${TAG}" \
        -q 'containerd.runtimes.runsc\]' /etc/containerd/config.toml; then
   echo "FAIL: the runsc runtime handler is not registered in the node's containerd config." >&2
-  echo "      Without it the RuntimeClass silently falls back to runc and a Pod still runs." >&2
+  echo "      Without it no sandbox Pod starts: each waits in ContainerCreating on" >&2
+  echo "      FailedCreatePodSandBox, 'no runtime for \"runsc\" is configured'." >&2
   exit 1
 fi
 
@@ -273,4 +280,4 @@ echo "OK: ${IMAGE}:${TAG} built for ${PLATFORMS}, loaded for ${HOST_PLATFORM}, r
 # image's whole purpose is to BE the cluster's node image, consumed at create
 # time by --image. A node whose containerd config was fixed at image build
 # cannot be given a new handler by loading a second image next to it.
-echo "next: bash labs/clusters/grid-sandbox/create.sh   # consumes this image as --image"
+echo "next: bash ${LABS_DIR}/clusters/grid-sandbox/create.sh   # consumes this image as --image"

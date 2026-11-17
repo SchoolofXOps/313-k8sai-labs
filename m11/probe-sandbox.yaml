@@ -1,6 +1,6 @@
 # labs/m11/probe-sandbox.yaml — the Sandbox the lab reads the kernel from
 #
-# agents.x-k8s.io/v1beta1 is the only version the Agent Sandbox v1.0.5 CRD
+# agents.x-k8s.io/v1beta1 is the only version the Agent Sandbox v1.0.11 CRD
 # serves. spec.podTemplate is a real PodSpec, so it carries runtimeClassName,
 # and that one field is what places this workload under gVisor's runsc.
 #

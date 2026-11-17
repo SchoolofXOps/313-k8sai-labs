@@ -1,0 +1,26 @@
+# addon-nvml-mock — the ONLY values this layer sets on the nvml-mock chart (0.7.0),
+# each with its reason. They are SPIKE-09's GO configuration, unchanged
+# (planning/lab-tests/spike-09-mokka.md § Pins and § "If GO", item 5).
+#
+# The devices this chart stages are MOCK DEVICES: a mock NVML library answers
+# every query with the identity the profile file below declares. The product
+# name, driver version and memory size it reports are values in that profile
+# file, not readings of anything on this machine.
+gpu:
+  # The smallest profile Mokka's guides document (the device-plugin guide's
+  # fleet example): four mock devices, the least device memory of any shipped
+  # profile, and pre-Hopper so it adds no profiling load. The profile decides
+  # which product strings every capture prints, so STANDARDS.md C15's pattern
+  # list follows THIS value; changing it is a reviewed change to that rule too.
+  profile: t4
+image:
+  # The chart takes a digest natively ("pins the image and wins over tag").
+  # The manifest-list INDEX digest, carrying linux/amd64 and linux/arm64
+  # (PINS.md § 2), so one pin serves both arms.
+  digest: sha256:1730a101817c21a9745af75a7a1dce0b066370b24b80cd987b4fba3ae7df1042
+# The mock lands on the labelled worker only. Without this selector the chart's
+# DaemonSet tolerates every taint and would rewrite the control plane's
+# containerd configuration as well. create.sh puts this label on exactly one
+# node, grid-core-worker, and teardown.sh removes it.
+nodeSelector:
+  mokka.nvidia.com/type: sgpu

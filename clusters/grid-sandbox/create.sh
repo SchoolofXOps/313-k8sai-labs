@@ -159,6 +159,17 @@ BASE_PROFILE_DIR="${LABS_DIR}/clusters/${BASE_PROFILE}"
 # gone.
 BASE_KUBECONFIG="${BASE_KUBECONFIG:-/tmp/grid-core.kubeconfig}"
 export KUBECONFIG="${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}"
+# The kubeconfig carries cluster-admin credentials and its default path is in
+# the shared /tmp (review IN-09, phase 5): it is written readable by this user
+# only, and a file someone else created there first is refused rather than
+# filled with credentials its owner can read.
+umask 077
+if [ -e "${KUBECONFIG}" ] && [ ! -O "${KUBECONFIG}" ]; then
+  echo "FAIL: ${KUBECONFIG} exists and is owned by another user, so this script will not write" >&2
+  echo "      cluster-admin credentials into it. Nothing was created or deleted." >&2
+  echo "      Remove it, or set KUBECONFIG to a path you own, and re-run this script." >&2
+  exit 1
+fi
 
 WORKER_NODES="$(size_value worker_nodes)"
 
@@ -310,6 +321,7 @@ if kind_cluster_exists "${BASE_PROFILE}"; then
   echo
   env KUBECONFIG="${BASE_KUBECONFIG}" bash "${BASE_PROFILE_DIR}/teardown.sh"
   KIND_CLUSTERS="$(kind get clusters 2>/dev/null || true)"
+  BASE_DELETED=1
 fi
 
 LAB_PROFILES="${LAB_PROFILES:-grid-core grid-sandbox}"
@@ -356,10 +368,14 @@ nodes:
             # The policy baked into the node image by its Dockerfile.
             - name: audit-policy-file
               value: /etc/kubernetes/policies/audit-policy.yaml
-            # "-" is the API server's own stdout, so the events land in the
-            # static Pod's container log and are read with `kubectl logs`.
+            # A FILE on the node, never "-" (the API server's stdout). Review
+            # WR-03 measured stdout losing M11's evidence: one restart of
+            # the kind node containers and `kubectl logs` read 0 events,
+            # a second and `--previous` read 0 too
+            # (planning/lab-tests/raw/m11/audit-restart/). The node's
+            # /var/log is kind's per-node volume, which a restart keeps.
             - name: audit-log-path
-              value: "-"
+              value: /var/log/kubernetes/audit/audit.log
           # The static Pod sees the node's filesystem only through volumes, so
           # the node-side file is mounted into it. pathType File: a missing
           # file fails the mount rather than being created as a directory.
@@ -369,6 +385,12 @@ nodes:
               mountPath: /etc/kubernetes/policies/audit-policy.yaml
               readOnly: true
               pathType: File
+            # The log's directory, writable, created on the node if absent.
+            - name: audit-log
+              hostPath: /var/log/kubernetes/audit
+              mountPath: /var/log/kubernetes/audit
+              readOnly: false
+              pathType: DirectoryOrCreate
 EOF
 
 _w=0
@@ -382,16 +404,28 @@ echo "  1 control-plane + ${WORKER_NODES} worker(s) — node count is create-tim
 echo "  the node image carries the sandbox runtime handler in its containerd config,"
 echo "  written at image build — which is the create-time-immutable decision that makes"
 echo "  this a profile rather than an addon layer."
-kind create cluster --name "${CLUSTER_NAME}" --image "${KIND_IMAGE}" \
-  --wait 120s --config "${KIND_CONFIG_FILE}"
+# Review IN-08: when this create fails after the base was deleted above, no
+# cluster is running and the restore line printed before the delete has
+# scrolled away, so the failure names it again.
+if ! kind create cluster --name "${CLUSTER_NAME}" --image "${KIND_IMAGE}" \
+       --wait 120s --config "${KIND_CONFIG_FILE}"; then
+  echo "FAIL: 'kind create cluster' for '${CLUSTER_NAME}' failed; read kind's error above." >&2
+  if [ "${BASE_DELETED:-0}" = 1 ]; then
+    echo "      '${BASE_PROFILE}' was deleted before this create, so no cluster is running now." >&2
+    echo "      Restore the base profile (it removes what the failed create left first):" >&2
+    echo "        bash ${PROFILE_DIR}/teardown.sh" >&2
+  fi
+  echo "      Fix the cause, then re-run: SIZE=${SIZE} bash ${PROFILE_DIR}/create.sh" >&2
+  exit 1
+fi
 
 kubectl config use-context "${CONTEXT}" >/dev/null
 echo
 echo "grid-sandbox profile ready at SIZE=${SIZE}: 1 control-plane + ${WORKER_NODES} worker(s)."
 echo "  node image: ${KIND_IMAGE} (locally built — the enumerated digest-pin exemption)"
 echo "  kubeconfig: ${KUBECONFIG} (isolated), context: ${CONTEXT}"
-echo "  audit log:  Metadata level, M11's agent-* namespaces and ServiceAccount groups, on the"
-echo "              API server's stdout — read: kubectl --context ${CONTEXT} -n kube-system logs kube-apiserver-${CLUSTER_NAME}-control-plane"
+echo "  audit log:  Metadata level, M11's agent-* namespaces and ServiceAccount groups, in a file on"
+echo "              the node that a restart keeps — read: docker exec ${CLUSTER_NAME}-control-plane cat /var/log/kubernetes/audit/audit.log"
 gates_enabled_on_cluster && _gates_rc=0 || _gates_rc=$?
 case "${_gates_rc}" in
   0) echo "  feature gates: ENABLED — ${FEATURE_GATES// /, }" ;;

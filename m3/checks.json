@@ -11,7 +11,7 @@
       "id": "dra-api-served-no-slices",
       "describe": "the cluster serves resourceslices.resource.k8s.io and holds zero ResourceSlices: the DRA API is there and no driver publishes a device, the headline gap. An unreachable cluster prints served=unread",
       "weight": 2,
-      "run": "r=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core api-resources --api-group=resource.k8s.io -o name 2>/dev/null); [ -n \"$r\" ] || { echo 'served=unread slices=unread'; exit 0; }; n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o name 2>/dev/null | grep -c '^resourceslice'); case \"$r\" in *resourceslices.resource.k8s.io*) a=yes;; *) a=no;; esac; printf 'served=%s slices=%s\\n' \"$a\" \"${n:-0}\"",
+      "run": "r=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core api-resources --api-group=resource.k8s.io -o name 2>/dev/null); [ -n \"$r\" ] || { echo 'served=unread slices=unread'; exit 0; }; case \"$r\" in *resourceslices.resource.k8s.io*) a=yes;; *) a=no;; esac; l=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o name 2>/dev/null) || { printf 'served=%s slices=unread\\n' \"$a\"; exit 0; }; n=$(printf '%s\\n' \"$l\" | grep -c '^resourceslice'); printf 'served=%s slices=%s\\n' \"$a\" \"$n\"",
       "assert": {
         "matches": "^served=yes slices=0$"
       }
