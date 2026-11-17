@@ -159,8 +159,11 @@ platform_check_refs() {
     // A purely numeric-dotted "repository" is not one: a chart values file
     // writes `tag: "1.121.3@sha256:<d>"`, which is an INPUT to a render and
     // half a reference. The whole reference is in the rendered manifest, which
-    // this walk also reads, so dropping the fragment loses no image.
-    const NUMERIC_ONLY = /^[0-9]+(?:\.[0-9]+)*$/;
+    // this walk also reads, so dropping the fragment loses no image. The same
+    // holds with a `v` prefix, `tag: "v2.11.0@sha256:<d>"` (the HAMi chart,
+    // labs/m4/optional/values.yaml, plan 05-41); no registry repository is a
+    // bare `v<number>` with no slash.
+    const NUMERIC_ONLY = /^v?[0-9]+(?:\.[0-9]+)*$/;
     // One exact path, not a pattern. See the self-reference note above.
     const SELF = new Set([path.join(root, "tools", "platform-check.sh")]);
     const out = new Set();

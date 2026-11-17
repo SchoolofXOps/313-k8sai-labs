@@ -21,7 +21,8 @@
 #
 #   The simulator has two tokenizers: a real one (HuggingFace, via this render
 #   service, selected by --render-url) and a fast in-process regex tokenizer with
-#   FNV-32a pseudo-hashes (selected by OMITTING --render-url). The router's
+#   FNV-32a pseudo-hashes (selected by OMITTING --render-url, or leaving it
+#   empty — since v1.0.0 that is the ONLY way to select it). The router's
 #   token-producer has its own two backends: `vllm` (this render service) and
 #   `estimate` (tokenizer-free byte-packing).
 #
@@ -49,8 +50,11 @@
 # linux/amd64 + linux/arm64/v8, digest-pinned. NOTE: this is a different image
 # from `vllm/vllm-openai`, which is CUDA-only and will not start here.
 # Tag v0.21.0 is chosen to match the simulator repo's OWN tested
-# manifests/deployment_kvcache.yaml at the v0.11.2 tag, not the course's
-# v0.30.0 vLLM pin: the component that has to interoperate is the simulator.
+# manifests/deployment_kvcache.yaml, not the course's v0.30.0 vLLM pin: the
+# component that has to interoperate is the simulator. Re-read at the
+# simulator's v1.2.0 tag by plan 05-31: that manifest still names
+# `vllm/vllm-openai-cpu:v0.21.0`, so this pin is KEPT unchanged through the
+# simulator re-pin (planning/lab-tests/05-addition-version-reads.md).
 ---
 apiVersion: apps/v1
 kind: Deployment

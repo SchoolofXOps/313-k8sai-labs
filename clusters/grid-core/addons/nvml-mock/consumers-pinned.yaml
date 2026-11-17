@@ -1,0 +1,139 @@
+# addon-nvml-mock — the two CONSUMERS of the mock, as applied. Committed, not generated.
+#
+# These are the two consumers SPIKE-09 proved on the mock, in the exact configuration it ran
+# (planning/lab-tests/spike-09-mokka.md § (a) and § (b)). Neither upstream ships a chart that
+# reproduces that configuration, so this file is the reviewed object set itself rather than a
+# render: create.sh asserts every image line here equals a digest recorded in PINS.md and applies
+# THIS file. A change to it is a reviewed change, and the checks file compares it with PINS.md.
+#
+# The devices both consumers see are MOCK DEVICES served by a mock NVML library. What either one
+# reports about them (a product name, a driver version, a memory size, an Xid's message text) is a
+# value from the mock's profile file or from the consumer's own catalogue, not a reading of hardware.
+#
+# Selected by create.sh's NVML_MOCK_CONSUMERS knob: applied by default, skipped in mock-only mode
+# (NVML_MOCK_CONSUMERS=none), which the optional scheduler lab needs because its own device plugin
+# advertises the same resource name (spike-10-hami.md § "If GO", item 2).
+---
+# (a) The device plugin, UNMODIFIED: Mokka v0.7.0's device-plugin guide (docs/guides/device-plugin.md,
+# Step 3), with the image moved from its tag (v0.18.2) to the index digest and nothing else changed.
+# It reads the mock's driver root on the labelled worker and registers its resource with the kubelet.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-mock
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-mock
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-mock
+    spec:
+      nodeSelector:
+        mokka.nvidia.com/type: sgpu
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: nvidia-device-plugin
+          image: nvcr.io/nvidia/k8s-device-plugin@sha256:b5788e29e7ae5272de8de863ebe386d6611e608421a6ecc5b4e7d5952aba637f
+          args:
+            - "--nvidia-driver-root=/var/lib/nvml-mock/driver"
+            - "--driver-root-ctr-path=/var/lib/nvml-mock/driver"
+            - "--device-discovery-strategy=nvml"
+            - "--pass-device-specs=true"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: mock-root
+              mountPath: /var/lib/nvml-mock
+              readOnly: true
+            - name: device-plugins
+              mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+        - name: mock-root
+          hostPath:
+            path: /var/lib/nvml-mock
+        - name: device-plugins
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+---
+# (b) dcgm-exporter, STANDALONE: its own manifest at tag 4.5.3-4.8.2 (NVIDIA/dcgm-exporter
+# dcgm-exporter.yaml), the version Mokka v0.7.0's CI runs, with exactly these changes, each for a
+# reason recorded in SPIKE-09:
+#   - its own namespace: the mock's NRI plugin never injects the mock's namespace or kube-system;
+#   - the pod annotation nvml-mock.nvidia.com/devices: "true": Mokka's documented opt-in for a
+#     node-wide monitoring agent, which is handed every mock device without a device request;
+#   - the worker nodeSelector: the one node the mock serves;
+#   - DCGM_EXPORTER_COLLECT_INTERVAL=5000: the value Mokka's own CI overlay sets;
+#   - NO resources block: the upstream manifest's 256Mi limit OOM-killed the exporter against the
+#     mock two seconds after every start (SPIKE-09 superseded run 2, exit 137), and its measured
+#     peak was 362-371 MiB on three arms. The configuration Mokka's CI runs, the GPU Operator
+#     v26.3.3 operand, sets `resources: {}`, so the tested configuration has no limit and this
+#     has none;
+#   - the image moved from its tag to the index digest.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dcgm-exporter
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: "dcgm-exporter"
+  namespace: dcgm-exporter
+  labels:
+    app.kubernetes.io/name: "dcgm-exporter"
+    app.kubernetes.io/version: "4.8.2"
+spec:
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: "dcgm-exporter"
+      app.kubernetes.io/version: "4.8.2"
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: "dcgm-exporter"
+        app.kubernetes.io/version: "4.8.2"
+      annotations:
+        nvml-mock.nvidia.com/devices: "true"
+      name: "dcgm-exporter"
+    spec:
+      nodeSelector:
+        mokka.nvidia.com/type: sgpu
+      automountServiceAccountToken: false
+      containers:
+      - image: "nvcr.io/nvidia/k8s/dcgm-exporter@sha256:60d3b00ac80b4ae77f94dae2f943685605585ad9e92fdccda3154d009ae317cc"
+        env:
+        - name: "DCGM_EXPORTER_LISTEN"
+          value: ":9400"
+        - name: "DCGM_EXPORTER_KUBERNETES"
+          value: "true"
+        - name: "DCGM_EXPORTER_COLLECT_INTERVAL"
+          value: "5000"
+        - name: "NODE_NAME"
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        name: "dcgm-exporter"
+        ports:
+        - name: "metrics"
+          containerPort: 9400
+        securityContext:
+          runAsNonRoot: false
+          runAsUser: 0
+          capabilities:
+            add: ["SYS_ADMIN"]
+            drop: ["ALL"]
+          allowPrivilegeEscalation: false
+        volumeMounts:
+        - name: "pod-gpu-resources"
+          readOnly: true
+          mountPath: "/var/lib/kubelet/pod-resources"
+      volumes:
+      - name: "pod-gpu-resources"
+        hostPath:
+          path: "/var/lib/kubelet/pod-resources"

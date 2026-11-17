@@ -3,13 +3,14 @@
 # labs/m11/warm-pool.yaml — what allocation from a warm pool looks like, as objects
 #
 # Both kinds below live in the EXTENSIONS group, extensions.agents.x-k8s.io/v1beta1,
-# which Agent Sandbox v1.0.5 ships as a separate release asset (extensions.yaml).
+# which Agent Sandbox v1.0.11 ships as a separate release asset (extensions.yaml).
 # This course installs the core asset, sandbox.yaml, and nothing else, so the
 # API server in grid-sandbox does not serve these kinds: an apply is rejected,
 # and a client dry run fails too, because it needs the CRD's discovery entry.
 #
-# Fields are taken from the v1.0.5 extensions.yaml asset's CRD schemas, read
-# 2026-11-11 (sha256 071d4966a085cf0b70a7b4786ed4c48351a133c10beae1a01ad921515952d40d):
+# Fields are taken from the v1.0.11 extensions.yaml asset's CRD schemas, read
+# 2026-11-17 (sha256 58623d40a12ab79944d219662d4e0d50daab909353bb98c6b897d43e91810886),
+# and are unchanged from the v1.0.5 asset this file was first written from:
 #   SandboxTemplate.spec requires podTemplate.
 #   SandboxWarmPool.spec requires sandboxTemplateRef; replicas (default 1) and
 #   updateStrategy.type (Recreate | OnReplenish, default OnReplenish) are optional.

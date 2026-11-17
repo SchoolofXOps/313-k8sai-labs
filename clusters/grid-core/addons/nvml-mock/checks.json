@@ -1,0 +1,67 @@
+{
+  "_why": "PLAT-04, PLAT-01, TRUST-06, TRUST-11. An ADDON LAYER's checks file, beside the layer's script triple at labs/clusters/grid-core/addons/nvml-mock/checks.json — not a MODULE checks path, so it carries no Truth Contract tag. EVERY ENTRY ASSERTS OBJECT STATE OR A FILE-LEVEL COUNT, AND NONE ASSERTS A PERFORMANCE NUMBER: no metric VALUE is read anywhere — the exporter is judged on whether a family exists, never on what it reports — and the only numbers printed are counts of Pods, nodes and digests. THE DEVICES ARE MOCK DEVICES served by a mock NVML library; whatever product name, driver version or memory size they report is a value in the mock's profile file, and STANDARDS.md C15 requires a caption wherever that text reaches a page. THE VENDOR RESOURCE LITERAL APPEARS NOWHERE IN THIS FILE: the device plugin's resource is selected by its `/gpu` SUFFIX, and the mock's Pods by their app label, so a jsonpath never has to spell the vendor domain. THESE ENTRIES DESCRIBE THE DEFAULT MODE (both consumers on). In mock-only mode (NVML_MOCK_CONSUMERS=none) the device-plugin, exporter, Xid and running-digest entries fail BY DESIGN, because the things they assert are deliberately absent; verify.sh reads the mode off the cluster and checks that mode instead. EVERY ENTRY THAT READS A FILE OF THE LAYER resolves it from either layout — `d=clusters/grid-core/addons/nvml-mock`, falling back to `labs/$d` — because the publish step strips the leading `labs/`, so a learner's clone holds the layer one level higher than this source tree does (the defect plan 05-28 fixed in addon-dra). EVERY kubectl SETS KUBECONFIG ITSELF: an export inside create.sh dies with the script, and the learner's own shell has no context.",
+  "checks": [
+    {
+      "id": "mock-pods-ready-on-the-labelled-worker-only",
+      "describe": "the mock's Pods are Ready and none is on the control plane. Printed as pods/ready/on_control_plane with a backreference, so ZERO Pods — an un-applied layer — cannot pass, and a mock Pod on the control plane fails: its node agent would rewrite that node's containerd as well. Ready is the kubelet's condition on the Pod, not the Pod's phase",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n mokka get pod -l app.kubernetes.io/name=nvml-mock -o json | jq -r '\"mock_pods=\" + (.items | length | tostring) + \" ready=\" + ([.items[] | select(any(.status.conditions[]?; .type == \"Ready\" and .status == \"True\"))] | length | tostring) + \" on_control_plane=\" + ([.items[] | select((.spec.nodeName // \"\") | endswith(\"-control-plane\"))] | length | tostring)'",
+      "assert": {
+        "matches": "^mock_pods=([1-9][0-9]*) ready=\\1 on_control_plane=0$"
+      }
+    },
+    {
+      "id": "a-node-advertises-the-device-plugin-resource-by-suffix",
+      "describe": "at least one node's allocatable carries a non-zero resource whose name ENDS IN `/gpu` — the unmodified device plugin, registered with the kubelet against the mock. Selected by suffix so the vendor resource literal never appears in this file. Only the NUMBER OF NODES is printed; the device count is accounting over mock devices and is not asserted",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get nodes -o json | jq -r '\"nodes_with_suffix_resource=\" + ([.items[] | select([.status.allocatable // {} | to_entries[] | select(.key | endswith(\"/gpu\")) | .value | tonumber] | any(. > 0))] | length | tostring)'",
+      "assert": {
+        "matches": "^nodes_with_suffix_resource=[1-9][0-9]*$"
+      }
+    },
+    {
+      "id": "exporter-daemonset-ready",
+      "describe": "the exporter's DaemonSet reports every desired Pod ready, and desires at least one. 0 of 0 is not a running exporter, which is why the pattern requires a non-zero count on both sides",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dcgm-exporter get ds dcgm-exporter -o json | jq -r '\"exporter desired=\" + (.status.desiredNumberScheduled | tostring) + \" ready=\" + (.status.numberReady | tostring)'",
+      "assert": {
+        "matches": "^exporter desired=([1-9][0-9]*) ready=\\1$"
+      }
+    },
+    {
+      "id": "xid-family-round-trip-through-the-probe",
+      "describe": "the exporter serves its DCGM_FI_DEV_XID_ERRORS family. Before any Xid is held that family does not exist at all, so the layer's probe injects one Xid on the last mock device, reads the family carrying it, resets that device, replaces the exporter Pod to drop DCGM's latch, and reads the family gone again; it exits 0 only after both legs. The Xid is a value written to the mock's override file, not a driver fault. Run this entry BEFORE a lab's own Xid injection: the replacement Pod starts with an empty latch",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/nvml-mock && { [ -d \"$d\" ] || d=labs/$d; } && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" bash \"$d/xid-probe.sh\"",
+      "assert": {
+        "exit": 0
+      }
+    },
+    {
+      "id": "running-containers-carry-the-registered-digests",
+      "describe": "the pins read back off the RUNNING containers rather than off the manifests: the digests PINS.md registers are counted, then how many of them appear in some imageID the kubelet reports for the layer's Pods (the mock's namespace, the exporter's namespace, and the device plugin's Pods), and the two counts must be equal and non-zero. A manifest can ask for a digest and a node can resolve something else; this is the half a written-only pin never catches",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/nvml-mock && { [ -d \"$d\" ] || d=labs/$d; } && IDS=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get pods -A -o json | jq -r '[.items[] | select(.metadata.namespace == \"mokka\" or .metadata.namespace == \"dcgm-exporter\" or (.metadata.labels.name // \"\") == \"nvidia-device-plugin-mock\") | .status | (.initContainerStatuses // []) + (.containerStatuses // []) | .[].imageID] | join(\" \")') && sed -n 's/^| `[^`]*@\\(sha256:[0-9a-f]\\{64\\}\\)`.*$/\\1/p' \"$d/PINS.md\" | sort -u | awk -v ids=\"$IDS\" 'BEGIN{n=0;hit=0} { n++; if (index(ids,$0)>0) hit++ } END{printf \"registered=%d honoured_by_a_running_container=%d\\n\", n, hit}'",
+      "assert": {
+        "matches": "^registered=([1-9][0-9]*) honoured_by_a_running_container=\\1$"
+      }
+    },
+    {
+      "id": "committed-object-sets-are-fully-digest-pinned",
+      "describe": "PLAT-01 over the layer's two committed object sets, and an entry that needs no cluster: every applied image line in rendered-pinned.yaml (the mock's chart render) and consumers-pinned.yaml (the two consumers) carries an @sha256 digest. It COUNTS the references as well as the unpinned ones, so an empty or truncated file cannot satisfy it",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/nvml-mock && { [ -d \"$d\" ] || d=labs/$d; } && sed -n 's/^[[:space:]-]*image:[[:space:]]*\"\\{0,1\\}\\([^\"[:space:]]\\{1,\\}\\)\"\\{0,1\\}[[:space:]]*$/\\1/p' \"$d/rendered-pinned.yaml\" \"$d/consumers-pinned.yaml\" | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
+      "assert": {
+        "matches": "^image_refs=[1-9][0-9]* unpinned=0$"
+      }
+    },
+    {
+      "id": "register-and-object-sets-agree-in-both-directions",
+      "describe": "PINS.md is load-bearing rather than decorative: every digest in the register's tables (the chart's and the three images') is counted, then how many of them appear in the two committed object sets, and then how many digests in those files the register does NOT record. Registered and present must be equal and non-zero, and unregistered must be zero. A pin in the register and absent from the files is a pin nobody applies; a digest in the files the register does not record is a pin with no provenance. The chart's digest counts as present because the render's generated header names the chart it was rendered from",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/nvml-mock && { [ -d \"$d\" ] || d=labs/$d; } && REG=$(sed -n '/^| /s/.*\\(sha256:[0-9a-f]\\{64\\}\\).*/\\1/p' \"$d/PINS.md\" | sort -u | tr '\\n' ' ') && awk -v reg=\"$REG\" 'BEGIN{n=split(reg,R,\" \")} { s=$0; while (match(s,/sha256:[0-9a-f]+/)) { if (RLENGTH==71) F[substr(s,RSTART,RLENGTH)]=1; s=substr(s,RSTART+RLENGTH) } } END{ hit=0; for (i=1;i<=n;i++) { Q[R[i]]=1; if (R[i] in F) hit++ } u=0; for (k in F) if (!(k in Q)) u++; printf \"registered=%d present=%d unregistered_in_files=%d\\n\", n, hit, u }' \"$d/rendered-pinned.yaml\" \"$d/consumers-pinned.yaml\"",
+      "assert": {
+        "matches": "^registered=([1-9][0-9]*) present=\\1 unregistered_in_files=0$"
+      }
+    }
+  ]
+}

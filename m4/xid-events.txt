@@ -1,20 +1,16 @@
 # SYNTHETIC FIXTURE — course-authored for Module 4. No device produced any line in this file.
-# There is no accelerator in the lab cluster, and dcgm-exporter cannot run without the vendor's
-# driver and DCGM libraries, so the evidence you classify here is written by the course in the
-# format the real evidence arrives in. Host names, PCI addresses, process names and UUIDs are
-# invented. The message text paraphrases the vendor's published XID descriptions; it is not a capture.
 #
-# Section 1 — kernel log lines, the format a node's kernel ring buffer carries (dmesg / journalctl -k)
+# This file holds ONLY the kernel-log half of the XID evidence. The exporter half is no longer a
+# fixture: in the lab you inject XID 48, 63 and 79 into mock devices served by NVIDIA's mock NVML
+# library and read them from a real, unmodified dcgm-exporter. The mock, as the lab's layer
+# configures it, writes nothing into the node's kernel log, so these lines are written by the
+# course in the format a node's kernel ring buffer carries them. Host names, PCI addresses and
+# process names are invented. The message text paraphrases the vendor's published XID
+# descriptions; it is not a capture.
+#
+# Kernel log lines, the format a node's kernel ring buffer carries (dmesg / journalctl -k)
 Nov 03 02:14:07 sim-node-a kernel: NVRM: Xid (PCI:0000:3b:00): 48, pid=18422, name=python3, An uncorrectable double bit error (DBE) has been detected on GPU in the framebuffer.
 Nov 03 02:14:07 sim-node-a kernel: NVRM: Xid (PCI:0000:3b:00): 48, pid=18422, name=python3, An uncorrectable double bit error (DBE) has been detected on GPU in the framebuffer.
 Nov 03 02:14:09 sim-node-a kernel: NVRM: Xid (PCI:0000:3b:00): 63, pid=18422, name=python3, Row Remapper: New row marked for remapping, reset the device to activate.
 Nov 04 11:52:41 sim-node-b kernel: NVRM: Xid (PCI:0000:86:00): 79, pid=0, name=none, GPU has fallen off the bus.
 Nov 04 11:52:41 sim-node-b kernel: NVRM: GPU 0000:86:00.0: GPU has fallen off the bus.
-#
-# Section 2 — samples in the format of dcgm-exporter's Prometheus exposition of the last XID seen.
-# The value is the XID number itself, not a count.
-# HELP DCGM_FI_DEV_XID_ERRORS Value of the last XID error encountered.
-# TYPE DCGM_FI_DEV_XID_ERRORS gauge
-DCGM_FI_DEV_XID_ERRORS{gpu="0",UUID="SIM-UUID-0000-0000-0000-0000000000a0",pci_bus_id="00000000:3B:00.0",Hostname="sim-node-a"} 48
-DCGM_FI_DEV_XID_ERRORS{gpu="0",UUID="SIM-UUID-0000-0000-0000-0000000000a0",pci_bus_id="00000000:3B:00.0",Hostname="sim-node-a"} 63
-DCGM_FI_DEV_XID_ERRORS{gpu="1",UUID="SIM-UUID-0000-0000-0000-0000000000b1",pci_bus_id="00000000:86:00.0",Hostname="sim-node-b"} 79

@@ -1,0 +1,31 @@
+# The vendor device plugin on mock devices, part one (M4.1/4.2). SIMULATED.
+#
+# Applied only after `clusters/grid-core/addons/nvml-mock/create.sh` has put NVIDIA's mock NVML
+# library (Mokka nvml-mock 0.7.0, the t4 profile) and the UNMODIFIED vendor device plugin onto the
+# worker. The plugin advertises its resource from the mock's four MOCK DEVICES.
+#
+# The resource name below is NVIDIA's; the devices behind it are mocks served by a mock NVML
+# library. A resource name is a matching key, not a hardware claim. Nothing in this Pod runs CUDA,
+# and nothing here measures a device: the lab reads the PodScheduled condition and the environment
+# the mock injected, and nothing else.
+#
+# This is the one place in the lab, with mock-plugin-over.yaml and extended-resource-bridge.yaml,
+# where the vendor resource name may appear (STANDARDS.md C23, clause 6).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m4-mock
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mock-plugin-one
+  namespace: m4-mock
+spec:
+  containers:
+  - name: workload
+    image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "sleep 3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

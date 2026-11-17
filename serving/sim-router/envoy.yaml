@@ -2,8 +2,8 @@
 #
 # Purpose: terminate the client request, ask the router which endpoint to use,
 # and forward there. This is the "self-managed Envoy proxy that does not require
-# Gateway API infrastructure" that llm-d-router v0.11.0's README calls
-# Standalone Mode.
+# Gateway API infrastructure" that llm-d-router's README calls Standalone
+# Mode — the wording is unchanged at v1.0.0 (README.md § "1. Standalone Mode").
 #
 # Mechanism — how an endpoint CHOICE becomes an observable fact:
 #
@@ -32,15 +32,19 @@
 # `kubectl port-forward`, so nothing is exposed outside the VM.
 #
 # Derived from llm-d-router v0.11.0's own
-# deploy/environments/dev/coordinator-e2e-infra/{envoy,shared-envoy-resources}.yaml,
+# deploy/environments/dev/coordinator-e2e-infra/{envoy,shared-envoy-resources}.yaml
+# (both files are still present at v1.0.0),
 # reduced to a single pool: the coordinator route, the EPP-Profile header
 # matching and the three-phase e-p-d topology are all removed, because this lab
 # has one EPP and no prefill/decode disaggregation.
 #
 # Image: envoyproxy/envoy distroless-v1.33.2, index digest resolved by this plan
 # (planning/lab-tests/raw/spike-03/digests-extra.log), multi-arch arm64 + amd64.
-# The version matches what llm-d-router v0.11.0 tests its own ext-proc path
-# against.
+# The version matches what llm-d-router tests its own ext-proc path against,
+# at v0.11.0 and still at v1.0.0: shared-envoy-resources.yaml and the
+# standalone chart's values.yaml both name distroless-v1.33.2 at the v1.0.0
+# tag, so this pin is KEPT through the router re-pin
+# (planning/lab-tests/05-addition-version-reads.md).
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -195,6 +199,19 @@ data:
                             request_trailer_mode: SEND
                             response_trailer_mode: SEND
                           message_timeout: 300s
+                          # FAIL CLOSED, stated rather than defaulted. llm-d-router
+                          # v1.0.0's standalone chart now defaults to fail-open
+                          # (`router.proxy.failOpen: true` sets this field to true
+                          # and adds a fallback route, docs/operations.md at
+                          # v1.0.0). For a production gateway that is availability.
+                          # For THIS lab it would be a silent lie: with the EPP
+                          # down, Envoy would forward every request without an
+                          # endpoint header and the access log would record
+                          # traffic that no policy chose. A router outage must
+                          # surface as an error, never as a measurement. `false`
+                          # is Envoy's own default; it is written out so the
+                          # contrast with upstream's chart is visible here.
+                          failure_mode_allow: false
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

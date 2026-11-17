@@ -1,0 +1,37 @@
+# Values for HAMi v2.11.0 in M4's optional lab (plan 05-41), from SPIKE-10's measured
+# configuration (planning/lab-tests/spike-10-hami.md § "If GO"). install-hami.sh renders the
+# chart release asset hami-2.11.0.tgz with this file and applies the committed render.
+#
+# Every image is pinned tag@index-digest through the chart's own tag fields, the way the chart
+# pins its own certgen image. install-hami.sh refuses a render with any other image line.
+#
+# The devices HAMi finds through these values are MOCK DEVICES served by Mokka's mock NVML
+# library. Nothing here runs CUDA, so no memory or core cap is enforced anywhere in this lab.
+global:
+  imageTag: "v2.11.0"
+scheduler:
+  defaultSchedulerPolicy:
+    nodeSchedulerPolicy: binpack     # the chart default; one worker, so it decides nothing here
+    gpuSchedulerPolicy: spread       # the chart default, stated; the lab flips it per Pod by annotation
+  kubeScheduler:
+    image:
+      tag: "v1.37.0@sha256:a27622f132aa09cf2461ba077894a070c0186ec607366d14e805912d4804d11f"
+  extender:
+    image:
+      tag: "v2.11.0@sha256:caab978ed50e53163c31ed7c4650c4e6e5d8facf157f377c26e021ff5fa3e5ce"
+devicePlugin:
+  image:
+    tag: "v2.11.0@sha256:caab978ed50e53163c31ed7c4650c4e6e5d8facf157f377c26e021ff5fa3e5ce"
+  monitor:
+    image:
+      tag: "v2.11.0@sha256:caab978ed50e53163c31ed7c4650c4e6e5d8facf157f377c26e021ff5fa3e5ce"
+  # HAMi Lab 5: point the device plugin at the mock's driver root and enumerate through NVML.
+  nvidiaDriverRoot: /var/lib/nvml-mock/driver
+  extraEnvs:
+    - name: DEVICE_DISCOVERY_STRATEGY
+      value: nvml
+# The v2.11.0 layout (#3124): every vendor setting lives under devices.<vendor>. The pre-v2.11.0
+# path devicePlugin.deviceSplitCount is refused by the chart at install (SPIKE-10, LAYOUT-OK).
+devices:
+  nvidia:
+    deviceSplitCount: 10             # the chart default, stated: 10 slots per mock device

@@ -9,7 +9,7 @@
 # be placed under gVisor without the Sandbox API knowing gVisor exists.
 #
 # SCOPE -- controller and CRD only, deliberately.
-# Upstream v1.0.5 publishes three release manifests:
+# Upstream v1.0.11 publishes three release manifests:
 #   sandbox.yaml                  controller + the Sandbox CRD      <- this one
 #   extensions.yaml               SandboxClaim / SandboxTemplate /
 #                                 SandboxWarmPool, on the separate
@@ -23,12 +23,16 @@
 # by installing extensions.yaml as a separate, explicit step -- not by this
 # script.
 #
-# API group note (CLAUDE.md, Modules 10-12): the Sandbox CRD in v1.0.5 serves
+# API group note (CLAUDE.md, Modules 10-12): the Sandbox CRD in v1.0.11 serves
 # agents.x-k8s.io/v1beta1 and NOTHING ELSE. v1alpha1 and its conversion
 # webhooks were removed at v1.0.0, so any manifest lifted from a 2025-era
 # example is dead on arrival -- it will be rejected by the API server, not
-# silently converted. Verified by reading the CRD in the pinned manifest:
-# planning/lab-tests/raw/spike-01/arm64/05-agent-sandbox-manifest-inspect.log
+# silently converted. Verified by reading the CRD in the pinned manifest on
+# 2026-11-17: exactly one CustomResourceDefinition, sandboxes.agents.x-k8s.io,
+# serving v1beta1 only, with spec.operatingMode (Running | Suspended) and
+# spec.volumeClaimTemplates in its schema
+# (planning/lab-tests/raw/05-addition/agent-sandbox-repin/03-v1.0.11-sandbox-yaml-census.txt;
+# the v1.0.5 read was planning/lab-tests/raw/spike-01/arm64/05-agent-sandbox-manifest-inspect.log).
 #
 # Usage:
 #   bash install.sh            # install controller + CRD, wait for rollout
@@ -42,7 +46,7 @@
 # Idempotent: re-running re-applies the same pinned manifest and re-waits for
 # the rollout; nothing is duplicated and no Sandbox object is touched.
 # bash-3.2 compatible (macOS default shell).
-# Pinned: Agent Sandbox v1.0.5 (release manifest, content-pinned by sha256).
+# Pinned: Agent Sandbox v1.0.11 (release manifest, content-pinned by sha256).
 set -euo pipefail
 
 # --- pinned-binary resolution -------------------------------------------------
@@ -65,23 +69,30 @@ export PATH
 assert_kubectl_version
 
 # --- knobs -------------------------------------------------------------------
-# Pinned to v1.0.5 exactly. Upstream ships a release every week or so
-# (v1.0.0 2026-08-28 ... v1.0.5 2026-10-01), and it removed a whole API version
-# at v1.0.0, so "latest" is not a safe reference for course material: the
-# version and the API group version must be pairable on screen.
-AGENT_SANDBOX_VERSION="${AGENT_SANDBOX_VERSION:-1.0.5}"
+# Pinned to v1.0.11 exactly (released 2026-11-12; the latest release on the
+# releases API when it was read, 2026-11-17 -- plan 05-34, Phase 5 CONTEXT
+# D-63, which supersedes the v1.0.5 pin of D-25). Upstream ships a release
+# every week or so (v1.0.0 2026-08-28 ... v1.0.11 2026-11-12), and it removed a
+# whole API version at v1.0.0, so "latest" is not a safe reference for course
+# material: the version and the API group version must be pairable on screen.
+# M11's suspend/resume step needs v1.0.9 or later (#2079: a suspended Sandbox
+# no longer reports Finished=True; #1775: the suspend and resume metrics).
+AGENT_SANDBOX_VERSION="${AGENT_SANDBOX_VERSION:-1.0.11}"
 # Upstream distributes release MANIFESTS, not a Helm chart -- there is no
 # published chart for this project at this version, so there is nothing to
 # `helm install`.
 MANIFEST_URL="${MANIFEST_URL:-https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v${AGENT_SANDBOX_VERSION}/sandbox.yaml}"
-# Content pin for the manifest above, verified by hand on 2026-10-05. A version
-# tag on a GitHub release asset is mutable in principle; the bytes are not.
-MANIFEST_SHA256="${MANIFEST_SHA256:-e89fd95c0aa57609fa24be4112bd52ce67fe8939ecf6f3c17edf2f1e8f1eb860}"
-# The controller image the manifest references, recorded here for the spike
-# record rather than substituted: index digest
-# sha256:28a9cbdbfd6ac0a4e5c7e9261ace1aa30ee2da681cb640dccdfed98e8dd9d98b,
-# multi-arch with linux/arm64 present
-# (raw/spike-01/arm64/07-controller-image-platforms.log).
+# Content pin for the manifest above, read on 2026-11-17 from the downloaded
+# asset itself (207211 bytes) and equal to the digest the releases API reports
+# for it. A version tag on a GitHub release asset is mutable in principle; the
+# bytes are not.
+MANIFEST_SHA256="${MANIFEST_SHA256:-4c54dc1284e9d34e9a00b88de2cb0f098f2dbce4ade814616fd49d44cfd5d1c2}"
+# The controller image the manifest references (by tag,
+# registry.k8s.io/agent-sandbox/agent-sandbox-controller:v1.0.11), recorded
+# here rather than substituted: index digest
+# sha256:73cb162407cddf73f4cd063b02bdee2dac86aa342bbc40bd99a9f023e69b31ed,
+# with linux/amd64 and linux/arm64, resolved 2026-11-17
+# (planning/lab-tests/raw/05-addition/agent-sandbox-repin/04-controller-v1.0.11-imagetools.txt).
 CONTEXT="${CONTEXT:-kind-grid-core}"
 NAMESPACE="${NAMESPACE:-agent-sandbox-system}"
 DEPLOYMENT="${DEPLOYMENT:-agent-sandbox-controller}"
@@ -222,14 +233,45 @@ while :; do
   esac
 done
 
-echo "==> waiting for the controller rollout"
-if ! kc -n "${NAMESPACE}" rollout status "deploy/${DEPLOYMENT}" --timeout=180s; then
+controller_fail() {
   echo "FAIL: the Agent Sandbox controller did not become available in ${NAMESPACE}." >&2
   echo "      Inspect it with:" >&2
   echo "        kubectl --context ${CONTEXT} -n ${NAMESPACE} describe deploy/${DEPLOYMENT}" >&2
+  echo "        kubectl --context ${CONTEXT} -n ${NAMESPACE} get events --sort-by=.lastTimestamp" >&2
   echo "        kubectl --context ${CONTEXT} -n ${NAMESPACE} logs deploy/${DEPLOYMENT} --tail=50" >&2
   exit 1
+}
+
+# The first wait covers a normal install. On a fresh cluster the kubelet must also pull the
+# controller image from registry.k8s.io, and on a slow link that pull alone has taken minutes
+# (6m35s in one of the course's runs). So when the first wait runs out, read why: a container
+# still waiting on its image gets one longer wait, and anything else fails at once. kubectl's
+# stdout streams as it always did; only the first wait's stderr is held back, and it is printed
+# if the script fails on it.
+ROLLOUT_WAIT_S=180
+PULL_WAIT_S=420
+echo "==> waiting for the controller rollout"
+exec 3>&1
+if ! rollout_err="$( { kc -n "${NAMESPACE}" rollout status "deploy/${DEPLOYMENT}" --timeout="${ROLLOUT_WAIT_S}s" >&3; } 2>&1 )"; then
+  reason="$(kc -n "${NAMESPACE}" get pods \
+              -o jsonpath='{range .items[*]}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null \
+              | awk 'NF { print; exit }')" || reason=""
+  case "${reason}" in
+    ContainerCreating|ErrImagePull|ImagePullBackOff)
+      echo "  the controller is not available after ${ROLLOUT_WAIT_S} s: its container is still waiting (${reason})."
+      echo "  On a fresh cluster this is most often the controller image still being pulled from registry.k8s.io,"
+      echo "  which can take several minutes on a slow link; waiting up to ${PULL_WAIT_S} s more."
+      kc -n "${NAMESPACE}" rollout status "deploy/${DEPLOYMENT}" --timeout="${PULL_WAIT_S}s" || controller_fail
+      ;;
+    *)
+      printf '%s\n' "${rollout_err}" >&2
+      controller_fail
+      ;;
+  esac
+elif [ -n "${rollout_err}" ]; then
+  printf '%s\n' "${rollout_err}" >&2
 fi
+exec 3>&-
 
 # Hard assert the API group version this course puts on screen. If upstream
 # ever serves a second version, the course must say which one it taught.

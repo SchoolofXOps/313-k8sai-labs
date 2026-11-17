@@ -1,5 +1,5 @@
 {
-  "_why": "M4 lab end state, read after \"Commit the node layer\" and before \"Teardown\". SIMULATED: the control plane, the kubelet, the DaemonSet rollout and the claim lifecycle are real; every device is a synthetic device published by the upstream example driver. Object state only (D-17, TRUST-06): claim allocation, ResourceSlice, Pod condition, the KEP-4680 health field, the DaemonSet revision and the learner's Grid files. No Pod phase is asserted alone and no number is read as performance. Every kubectl sets KUBECONFIG and --context kind-grid-core itself. Every matches is anchored and in JavaScript regex dialect. The vendor resource name of part 4 appears nowhere in this file (STANDARDS.md C23); the bridge is asserted through the Pod's extendedResourceClaimStatus and the claim it names. Paths are relative to the learner tree (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m4/checks.json).",
+  "_why": "M4 lab end state, read after \"Commit the node layer\" and before \"Teardown\". SIMULATED: the control plane, the kubelet, the DaemonSet rollout and the claim lifecycle are real; every device is a synthetic device published by the upstream example driver. Object state only (D-17, TRUST-06): claim allocation, ResourceSlice, Pod condition, the KEP-4680 health field, the DaemonSet revision and the learner's Grid files. No Pod phase is asserted alone and no number is read as performance. Every kubectl sets KUBECONFIG and --context kind-grid-core itself. Every matches is anchored and in JavaScript regex dialect. The vendor resource name of part 4 appears nowhere in this file (STANDARDS.md C23); the bridge is asserted through the Pod's extendedResourceClaimStatus and the claim it names, and the mock section's device-plugin resource is selected by its /gpu suffix (plan 05-38). Paths are relative to the learner tree (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m4/checks.json).",
   "truth_contract": "SIMULATED",
   "checks": [
     {
@@ -109,6 +109,33 @@
       }
     },
     {
+      "id": "mock-plugin-advertises-by-suffix",
+      "describe": "the mock section, part one: the worker's allocatable carries exactly one resource whose name ends in /gpu, advertised by the vendor's unmodified device plugin from the mock's devices, and it is non-zero. The resource is selected by its suffix and never spelled (STANDARDS.md C23 clause 8); the count is a profile constant, not a reading, so only non-zero is asserted. A teardown leaves the key with allocatable 0 (plan 05-37), which fails here",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get node grid-core-worker -o json | jq -r '[.status.allocatable // {} | to_entries[] | select(.key | endswith(\"/gpu\"))] | \"suffix_resources=\" + (length | tostring) + \" allocatable_nonzero=\" + ([.[] | .value | tonumber | select(. > 0)] | length | tostring)'",
+      "assert": {
+        "matches": "^suffix_resources=1 allocatable_nonzero=1$"
+      }
+    },
+    {
+      "id": "mock-plugin-pod-scheduled-with-mock-env",
+      "describe": "the mock section, part one: Pod mock-plugin-one asks for one unit of a resource whose name ends in /gpu, its PodScheduled condition is True, and its container carries the mock's own MOCK_NVML_CONFIG variable, read from inside the Pod. That variable is what says the container's view of the hardware is the mock's injection, not a driver's. Object state, never the phase",
+      "weight": 2,
+      "run": "sh -c 'export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; s=$(kubectl --context kind-grid-core -n m4-mock get pod mock-plugin-one -o jsonpath=\"{.status.conditions[?(@.type==\\\"PodScheduled\\\")].status}\"); r=$(kubectl --context kind-grid-core -n m4-mock get pod mock-plugin-one -o json | jq \"[.spec.containers[].resources.limits // {} | keys[] | select(endswith(\\\"/gpu\\\"))] | length\"); e=$(kubectl --context kind-grid-core -n m4-mock exec mock-plugin-one -- sh -c env 2>/dev/null | grep -c \"^MOCK_NVML_CONFIG=\"); echo \"scheduled=$s requests_suffix=$r mock_env=$e\"'",
+      "assert": {
+        "matches": "^scheduled=True requests_suffix=1 mock_env=1$"
+      }
+    },
+    {
+      "id": "mock-plugin-over-insufficient",
+      "describe": "the mock section's deliberate failure: Pod mock-plugin-over asked for one more than the device plugin advertised, and its PodScheduled condition is False, Unschedulable, naming an Insufficient resource whose name ends in /gpu — read from the condition, never the phase, and the resource never spelled",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m4-mock get pod mock-plugin-over -o json | jq -r '.status.conditions[]? | select(.type == \"PodScheduled\") | \"status=\\(.status) reason=\\(.reason) insufficient=\" + (((.message // \"\") | capture(\"Insufficient [a-z0-9.-]+(?<r>/gpu)(,| |$)\") | .r) // \"none\")'",
+      "assert": {
+        "matches": "^status=False reason=Unschedulable insufficient=/gpu$"
+      }
+    },
+    {
       "id": "rollback-record-uids",
       "describe": "part 2's record in the learner's repository: all ten keys present, the holder UIDs are UUID-form and equal, and both plugin Pod UIDs recorded",
       "run": "sh -c 'f=grid-platform/nodes/lifecycle/rollback-record.md; n=0; for k in holder-uid-before holder-uid-after holder-restarts-before holder-restarts-after holder-device-before holder-device-after plugin-pod-uid-before plugin-pod-uid-after slice-generation-before slice-generation-after; do c=$(grep -c \"^$k:\" \"$f\" 2>/dev/null); [ \"$c\" = \"1\" ] && n=$((n+1)); done; hb=$(sed -n \"s/^holder-uid-before:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); ha=$(sed -n \"s/^holder-uid-after:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); pb=$(sed -n \"s/^plugin-pod-uid-before:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); pa=$(sed -n \"s/^plugin-pod-uid-after:[[:space:]]*//p\" \"$f\" 2>/dev/null | head -1); u=$(printf \"%s\\n\" \"$hb\" | grep -cx \"[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}\"); h=differ; if [ \"$u\" = \"1\" ] && [ \"$hb\" = \"$ha\" ]; then h=equal; fi; p=missing; if [ -n \"$pb\" ] && [ -n \"$pa\" ]; then p=recorded; fi; echo \"keys=$n holder=$h plugin=$p\"'",
@@ -118,10 +145,18 @@
     },
     {
       "id": "xid-classification-three-rows",
-      "describe": "part 6's classification in the learner's repository: under the fixed header, one row each for XID 48, 63 and 79, every cell non-empty",
+      "describe": "part 6's classification in the learner's repository: under the fixed header, one row each for XID 48, 63 and 79, every cell non-empty. Kept, with its run unchanged, because the published grid-v0.5 capability row cites it (STANDARDS.md C20) and it reads the rows only, whatever the evidence source; xid-classification-cites-live-exporter is the entry that fails on a fixture-era source (plan 05-38)",
       "run": "awk -F'|' 'BEGIN { h = 0; n = 0; x = \"\" } /^\\| XID \\| Evidence \\| Class \\| First action \\|/ { h = 1; next } h && /^\\|[[:space:]]*(48|63|79)[[:space:]]*\\|/ { ok = (NF >= 6); for (i = 2; i <= 5; i++) { c = $i; gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", c); if (c == \"\") ok = 0 } if (ok) { id = $2; gsub(/[[:space:]]/, \"\", id); n++; x = x (x == \"\" ? \"\" : \",\") id } } END { print \"rows=\" n \" xids=\" x }' grid-platform/nodes/health/xid-classification.md",
       "assert": {
         "matches": "^rows=3 xids=48,63,79$"
+      }
+    },
+    {
+      "id": "xid-classification-cites-live-exporter",
+      "describe": "the mock section's classification in the learner's repository: under the fixed header, one row each for XID 48, 63 and 79, every cell non-empty, and an evidence-source line that cites the live dcgm-exporter reading mock devices. Replaces the fixture-era entry, whose source was the course-authored file alone (D-60 supersedes D-15 step 6)",
+      "run": "awk -F'|' 'BEGIN { h = 0; n = 0; x = \"\" } /^\\| XID \\| Evidence \\| Class \\| First action \\|/ { h = 1; next } h && /^\\|[[:space:]]*(48|63|79)[[:space:]]*\\|/ { ok = (NF >= 6); for (i = 2; i <= 5; i++) { c = $i; gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", c); if (c == \"\") ok = 0 } if (ok) { id = $2; gsub(/[[:space:]]/, \"\", id); n++; x = x (x == \"\" ? \"\" : \",\") id } } END { print \"rows=\" n \" xids=\" x }' grid-platform/nodes/health/xid-classification.md; printf 'source_live_exporter=%s\\n' \"$(grep -c '^Evidence source: the live dcgm-exporter.*mock devices' grid-platform/nodes/health/xid-classification.md 2>/dev/null)\"",
+      "assert": {
+        "matches": "^rows=3 xids=48,63,79\\nsource_live_exporter=1$"
       }
     },
     {

@@ -9,6 +9,16 @@ compared against the same endpoints.
 produce comes from `llm-d-inference-sim`, not from a model server. Nothing here
 measures real inference.
 
+**Pins.** `llm-d-inference-sim` **v1.2.0** and `llm-d-router-endpoint-picker`
+**v1.0.0**, by multi-arch index digest, re-pinned from v0.11.2 and v0.11.0 by
+plan 05-31 (D-57). Every `EndpointPickerConfig` is at `llm-d.ai/v1`. Each
+digest is recorded once, with its platform list, as a `PIN` line in
+`planning/lab-tests/05-addition-version-reads.md`, beside the upstream files it
+was read from. **Every measured figure on this page was taken on v0.11.x by
+SPIKE-03 and SPIKE-05.** None of it carries over to the new pins by inference;
+SPIKE-08 (plan 05-32) re-runs the same experiments on them and its record is
+the one to quote.
+
 ---
 
 ## Policy 1 — round-robin / random (the CONTROL)
@@ -24,7 +34,9 @@ calculated by scorer plugins". With no scorers configured there is nothing to
 ignore, so the pick is uniform over the ready endpoints.
 
 A note on the name, because it matters for what may be claimed on a slide:
-`llm-d-router` v0.11.0 ships **uniform random**, not strict round-robin. For a
+`llm-d-router` ships **uniform random**, not strict round-robin — at v0.11.0,
+and still at v1.0.0, where `random-picker` is registered as Stable and its
+README reads the same. For a
 control the distinction is irrelevant — both are independent of the state under
 test — but the course must say *random*, not *round-robin*, when describing what
 actually ran.
@@ -43,7 +55,12 @@ in `[0, 0.5]`: an empty queue scores `0.5`, a queue at or beyond the threshold
 scores `0.0`, linear in between. The metric reaches it through the data layer —
 `metrics-data-source` scrapes each simulator's `/metrics`, `core-metrics-extractor`
 maps the vLLM metric names onto endpoint state. This works without a real vLLM
-only because the simulator exposes the vLLM-compatible metric subset.
+only because the simulator exposes the vLLM-compatible metric subset. The queue
+depth arrives as `vllm:num_requests_waiting`, which the router's default mapping
+reads at v1.0.0 and the simulator still exports at v1.2.0. The one vLLM metric
+the simulator renamed in this range — `vllm:max_num_generation_tokens` became
+`vllm:request_max_num_generation_tokens` at v1.1.0 — is read nowhere in this
+lab.
 
 ## Policy 3 — prefix-cache-aware (the one SPIKE-03 exists for)
 
@@ -74,7 +91,11 @@ Two configuration facts that are silent failures rather than errors if missed:
   to equal the simulator's. The simulator's fast regex/FNV tokenizer and the
   router's `estimate` byte-packing backend are different algorithms; pairing them
   yields an index that ingests every event and matches nothing. Both therefore
-  point at `vllm-render`. See `render.yaml`.
+  point at `vllm-render`. See `render.yaml`. On the simulator side, since v1.0.0
+  the render URL is the only tokenizer switch: an empty or absent `--render-url`
+  selects the simulated tokenizer. On the router side, v1.0.0 turns half of this
+  silent failure into a loud one: it refuses at startup to feed
+  `precise-prefix-cache-producer` from an estimate-backed `token-producer`.
 
 ---
 
@@ -116,6 +137,8 @@ holds residency fixed and varies one thing: `setup.sh asymmetry`.
 Every cache manipulation is performed **directly against a simulator pod**, so
 the only channel by which the router can learn of it is the ZMQ event stream.
 
+Measured on v0.11.x (SPIKE-03); SPIKE-08 repeats it on the new pins.
+
 1. warm prefix A on pod **P** (direct) -> router index admissions 0 -> 45
 2. ask the **router** for A -> picks **P**, scores `{P:10, other:0, Q:0}`
 3. warm prefix A on pod **Q** (direct) -> admissions 45 -> 90
@@ -135,8 +158,11 @@ The simulator's latency parameters are **not authored by this course** and are
 **not tuned**. `sim.yaml` mounts a verbatim copy of:
 
 > `manifests/latency-profiles/small-l40s-edge-per-token.yaml`
-> from `llm-d/llm-d-inference-sim` at tag **v0.11.2**
+> from `llm-d/llm-d-inference-sim` at tag **v1.2.0**
 > *"Profile 3: Small (1-3B) model on L40S, low-latency edge (per-token calculator)."*
+
+The v1.2.0 copy adds one key upstream wrote, `engine: vllm`; every latency value
+is byte-identical to the v0.11.2 copy SPIKE-03 ran.
 
 Values, unaltered: `inter-token-latency 15ms` (sd 2ms) · `prefill-overhead 20ms` ·
 `prefill-time-per-token 350us` (sd 3ms) · `kv-cache-transfer-time-per-token 12us`
