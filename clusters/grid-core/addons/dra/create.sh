@@ -49,10 +49,12 @@
 #   bash create.sh                 # apply the layer onto a running grid-core
 #   bash create.sh && bash verify.sh
 #
-# Regenerate rendered-pinned.yaml:
-#   bash labs/clusters/grid-core/addons/dra/create.sh
-#   (it is rewritten on every run from the chart at ${CHART_TAG}; a clean
-#    `git status` after a run is the evidence that the committed copy matches)
+# Regenerate rendered-pinned.yaml (a deliberate, reviewed change only):
+#   REGENERATE=1 bash labs/clusters/grid-core/addons/dra/create.sh
+#   Every other run renders the chart at the pinned commit, REFUSES if the
+#   render differs from the committed copy by one byte, and applies the
+#   COMMITTED copy (review WR-04, phase 5). The applied object set is therefore
+#   always the one in the tree, never a fresh render nobody reviewed.
 #
 # Env (match planning/lab-tests/spike-00-preflight.md on the build host):
 #   export PATH="/opt/homebrew/bin:$PATH"   # /usr/local/bin/kind is a stale v0.32.0 shim
@@ -106,8 +108,14 @@ DAEMONSET="${RELEASE}-kubeletplugin"
 # The chart, pinned by GIT TAG. See the header for why not by chart version.
 CHART_REPO="${CHART_REPO:-https://github.com/kubernetes-sigs/dra-example-driver.git}"
 CHART_TAG="${CHART_TAG:-v0.5.0}"
+# The commit the tag names, read with `git ls-remote` (refs/tags/v0.5.0^{}) on
+# 2026-11-17 and equal to the commit recorded in rendered-pinned.yaml's header.
+# A tag is a name that the clone's own .git answers for; a commit is content.
+CHART_COMMIT_EXPECTED="${CHART_COMMIT_EXPECTED:-93ff610f3c3bfd603c592d1c281a236c1463edb9}"
 CHART_SUBDIR="deployments/helm/dra-example-driver"
-WORKDIR="${WORKDIR:-/tmp/313-addon-dra}"
+# A per-user cache, not a fixed shared /tmp path another local user could
+# create first (review IN-09).
+WORKDIR="${WORKDIR:-${XDG_CACHE_HOME:-${HOME}/.cache}/313-k8sai/addon-dra}"
 
 # The manifest-list (index) digest, resolved in SPIKE-00 with
 # `docker buildx imagetools inspect` and re-verified in 03-RESEARCH.md. The index
@@ -219,7 +227,10 @@ mkdir -p "${WORKDIR}"
 CHART_CLONE="${WORKDIR}/dra-example-driver"
 if [ ! -d "${CHART_CLONE}/.git" ]; then
   echo "==> cloning ${CHART_REPO} at ${CHART_TAG}" >&2
-  if ! git clone --quiet --depth 1 --branch "${CHART_TAG}" "${CHART_REPO}" "${CHART_CLONE}"; then
+  # advice.detachedHead=false: a clone at a tag is a detached HEAD by design,
+  # and git's seventeen-line advice about it is noise in a learner's first run
+  # (measured: M4 lab run 4 of the phase-5 review fixes).
+  if ! git -c advice.detachedHead=false clone --quiet --depth 1 --branch "${CHART_TAG}" "${CHART_REPO}" "${CHART_CLONE}"; then
     echo "FAIL: could not clone ${CHART_REPO} at tag ${CHART_TAG}." >&2
     echo "      Nothing has been applied to '${CLUSTER_NAME}'." >&2
     rm -rf "${CHART_CLONE}"
@@ -250,6 +261,18 @@ ${CHART_TAG}
     ;;
 esac
 
+# The tag check above reads names out of the clone's own .git, which whoever
+# created the directory controls. The commit is compared as well, and the
+# render below is compared byte for byte with the committed copy, which is
+# what makes a tampered clone unable to change what is applied.
+if [ "${CHART_COMMIT}" != "${CHART_COMMIT_EXPECTED}" ]; then
+  echo "FAIL: the chart clone at ${CHART_CLONE} is at commit ${CHART_COMMIT:-<unknown>}," >&2
+  echo "      not ${CHART_COMMIT_EXPECTED}, the commit ${CHART_TAG} names. Nothing has been applied." >&2
+  echo "      Remove it and re-run so it is fetched at the pinned tag:" >&2
+  echo "        rm -rf ${CHART_CLONE} && bash ${ADDON_DIR}/create.sh" >&2
+  exit 1
+fi
+
 if [ ! -f "${CHART_CLONE}/${CHART_SUBDIR}/Chart.yaml" ]; then
   echo "FAIL: no chart at ${CHART_CLONE}/${CHART_SUBDIR}." >&2
   exit 1
@@ -264,7 +287,7 @@ fi
 # installed — and the assert below fails rather than applying a DeviceClass with
 # an empty apiVersion.
 RENDER_TMP="$(mktemp "${TMPDIR:-/tmp}/addon-dra-rendered.XXXXXX")"
-trap 'rm -f "${RENDER_TMP}" "${RENDER_TMP}.sub"' EXIT
+trap 'rm -f "${RENDER_TMP}" "${RENDER_TMP}.sub" "${RENDER_TMP}.candidate"' EXIT
 
 if ! helm template "${RELEASE}" "${CHART_CLONE}/${CHART_SUBDIR}" \
        --namespace "${NAMESPACE}" \
@@ -299,18 +322,21 @@ sed "s|${DRIVER_IMAGE_REPO}:[A-Za-z0-9._-]\{1,\}|${DRIVER_IMAGE}|g" \
 # THE ASSERT THAT MAKES THE SUBSTITUTION EVIDENCE RATHER THAN AN INTENTION.
 # Two halves, because they catch different failures:
 #   1. no tag-form reference to the driver image survives anywhere;
-#   2. every `image:` line in the file carries an @sha256 digest — which also
-#      catches an image this chart grew in a later release that the substitution
-#      above does not know about.
+#   2. every `image:` line in the file IS the pinned driver image, exactly —
+#      which also catches an image this chart grew in a later release, digest
+#      form or not (review WR-04: a digest proves only that SOME bytes are
+#      named, not that they are the bytes this course pinned).
 IMAGE_LINES="$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(.*\)$/\1/p' "${RENDER_TMP}.sub")"
 if [ -z "${IMAGE_LINES}" ]; then
   echo "FAIL: the rendered chart carries no 'image:' line at all, which cannot be right." >&2
   exit 1
 fi
 UNPINNED=""
+OTHER=""
 for _img in ${IMAGE_LINES}; do
   case "${_img}" in
-    *"@sha256:"*) : ;;
+    "${DRIVER_IMAGE}"|"\"${DRIVER_IMAGE}\"") : ;;
+    *"@sha256:"*) OTHER="${OTHER} ${_img}" ;;
     *) UNPINNED="${UNPINNED} ${_img}" ;;
   esac
 done
@@ -319,6 +345,12 @@ if [ -n "${UNPINNED}" ]; then
   echo "      PLAT-01 pins every lab image by @sha256 digest. Nothing has been applied." >&2
   echo "      Resolve the index digest and extend the substitution in this script:" >&2
   echo "        docker buildx imagetools inspect <repo>:<tag>" >&2
+  exit 1
+fi
+if [ -n "${OTHER}" ]; then
+  echo "FAIL: the render names an image that is not the pinned driver image:${OTHER}" >&2
+  echo "      This layer applies exactly one image, ${DRIVER_IMAGE}." >&2
+  echo "      Nothing has been applied. A new image is a reviewed change: pin it here first." >&2
   exit 1
 fi
 echo "digest-pin: every driver image reference is digest-pinned (pre-apply assert passed)"
@@ -337,7 +369,7 @@ case "${DC_APIVERSION}" in
     ;;
 esac
 
-# --- commit the rendered object set into the tree -----------------------------
+# --- compare the render with the committed object set -------------------------
 {
   echo "# GENERATED FILE — do not edit by hand."
   echo "#"
@@ -347,18 +379,30 @@ esac
   echo "# and with every driver image reference replaced by the resolved"
   echo "# manifest-list index digest."
   echo "#"
-  echo "# Regenerate with:"
-  echo "#   bash labs/clusters/grid-core/addons/dra/create.sh"
+  echo "# Regenerate with (a reviewed change only):"
+  echo "#   REGENERATE=1 bash labs/clusters/grid-core/addons/dra/create.sh"
   echo "#"
   echo "# It is committed so the applied object set is reviewable in the tree and"
-  echo "# so the digest-pin gate has a real subject. A clean \`git status\` after a"
-  echo "# create run is the evidence that this copy matches the chart at the tag."
+  echo "# so the digest-pin gate has a real subject. create.sh applies THIS file,"
+  echo "# and only after a fresh render at the pinned commit matches it byte for byte."
   echo "#"
   echo "# The devices this object set advertises are SYNTHETIC. The driver's own"
   echo "# device names, its model string and its 80Gi \`memory\` capacity are Go"
   echo "# constants, not readings — see planning/lab-tests/03-addon-dra.md."
   normalize_render < "${RENDER_TMP}.sub"
-} > "${RENDERED}"
+} > "${RENDER_TMP}.candidate"
+
+if [ "${REGENERATE:-0}" = "1" ]; then
+  cp "${RENDER_TMP}.candidate" "${RENDERED}"
+  echo "==> REGENERATE=1: wrote ${RENDERED} from the render at ${CHART_TAG}; review its diff before committing" >&2
+elif ! cmp -s "${RENDER_TMP}.candidate" "${RENDERED}"; then
+  echo "FAIL: the committed rendered-pinned.yaml differs from a fresh render of the chart at ${CHART_TAG}" >&2
+  echo "      (commit ${CHART_COMMIT}): ${RENDERED}" >&2
+  echo "      Nothing has been applied, and the committed file was not changed." >&2
+  echo "      To see the difference, re-run with REGENERATE=1 and read 'git diff' on that file;" >&2
+  echo "      keep it only as a deliberate, reviewed change: REGENERATE=1 bash ${ADDON_DIR}/create.sh" >&2
+  exit 1
+fi
 
 # --- apply --------------------------------------------------------------------
 # NEVER apply into a Terminating namespace. It exits 0 and creates nothing (a

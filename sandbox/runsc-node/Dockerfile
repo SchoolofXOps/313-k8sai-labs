@@ -28,9 +28,9 @@
 #
 # The containerd runtime handler registered here is named exactly `runsc`, and
 # labs/sandbox/runsc-node/runtimeclass.yaml sets `handler: runsc` to match. A
-# mismatch between those two names is the silent failure mode of this pair:
-# containerd falls back to the default runtime and the Pod still reaches
-# Running, so it must be checked from INSIDE the Pod, never from outside.
+# mismatch is LOUD: the Pod waits in ContainerCreating on "no runtime for ...
+# is configured" (plan 05-21a). The silent case is a Pod with no runtimeClassName,
+# on the default runtime and Running: check the sandbox from INSIDE the Pod.
 #
 # Build with the sibling build.sh -- it carries the knobs and the arch matrix.
 #
@@ -121,7 +121,7 @@ RUN set -eux; \
     \
     # Prove the binaries actually execute on this platform at BUILD time, so a
     # wrong-architecture artefact fails the build rather than surfacing later as
-    # a mysterious Pod that silently ran under runc.
+    # a sandbox Pod that never starts.
     runsc --version; \
     containerd-shim-runsc-v1 -v || true
 
@@ -146,8 +146,9 @@ RUN set -eux; \
 # the v2 config format and the v2 `io.containerd.grpc.v1.cri` plugin path, so
 # the stanza below is written in the SAME dialect as the base image's own runc
 # and test-handler stanzas. Writing a v3 `io.containerd.cri.v1.runtime` stanza
-# into a v2 document would be silently ignored, and a silently ignored handler
-# means containerd falls back to runc while the Pod still reports Running.
+# into a v2 document would be silently ignored at build time, and a handler
+# containerd ignored is a handler it does not have: every sandbox Pod then
+# waits in ContainerCreating on "no runtime for ... is configured".
 #
 # Appended rather than rewritten: kind's entrypoint rewrites the snapshotter
 # line in this file at node start, so the base content must survive intact.

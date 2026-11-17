@@ -85,29 +85,55 @@ MANIFEST_SHA256="${MANIFEST_SHA256:-e89fd95c0aa57609fa24be4112bd52ce67fe8939ecf6
 CONTEXT="${CONTEXT:-kind-grid-core}"
 NAMESPACE="${NAMESPACE:-agent-sandbox-system}"
 DEPLOYMENT="${DEPLOYMENT:-agent-sandbox-controller}"
-WORKDIR="${WORKDIR:-/tmp/313-agent-sandbox}"
+# A per-user cache, not a fixed shared /tmp path another local user could
+# create first (review IN-09, phase 5).
+WORKDIR="${WORKDIR:-${XDG_CACHE_HOME:-${HOME}/.cache}/313-k8sai/agent-sandbox}"
 
 kc() { kubectl --context "${CONTEXT}" "$@"; }
 
 fetch_manifest() {
   mkdir -p "${WORKDIR}"
   local f="${WORKDIR}/sandbox-v${AGENT_SANDBOX_VERSION}.yaml"
+  local got
+  # A cached file is trusted only while it still matches the pin. Nothing this
+  # script writes reaches that path unverified (below), so a mismatch there is
+  # a partial download left by an older version of this script, or an edit:
+  # it is deleted and fetched once more rather than blamed on upstream (review
+  # WR-09, phase 5).
+  if [ -s "${f}" ]; then
+    got="$(shasum -a 256 "${f}" | awk '{print $1}')"
+    if [ "${got}" != "${MANIFEST_SHA256}" ]; then
+      echo "==> the cached ${f} does not match its pin; deleting it and downloading again" >&2
+      rm -f "${f}"
+    fi
+  fi
   if [ ! -s "${f}" ]; then
     echo "==> fetching Agent Sandbox v${AGENT_SANDBOX_VERSION} release manifest"
-    curl -fsSL --retry 3 -o "${f}" "${MANIFEST_URL}"
-  fi
-  # Content gate. A release asset that no longer matches its recorded bytes is
-  # a stop, not a warning: this manifest installs a cluster-scoped CRD and a
-  # ClusterRole.
-  local got
-  got="$(shasum -a 256 "${f}" | awk '{print $1}')"
-  if [ "${got}" != "${MANIFEST_SHA256}" ]; then
-    echo "FAIL: ${MANIFEST_URL}" >&2
-    echo "      sha256 ${got}" >&2
-    echo "      expected ${MANIFEST_SHA256}" >&2
-    echo "      The release asset's bytes changed. Re-verify upstream before installing;" >&2
-    echo "      this manifest carries a cluster-scoped CRD and a ClusterRole." >&2
-    exit 1
+    # Into a .part file, moved into place only after the content gate: a curl
+    # that dies part-way (a dropped network, a Ctrl-C) leaves nothing at the
+    # cache path for the next run to trust.
+    rm -f "${f}.part"
+    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 -o "${f}.part" "${MANIFEST_URL}"; then
+      rm -f "${f}.part"
+      echo "FAIL: could not download ${MANIFEST_URL}" >&2
+      echo "      Nothing was cached at ${f}; check the network and re-run." >&2
+      exit 1
+    fi
+    # Content gate. A release asset that no longer matches its recorded bytes
+    # is a stop, not a warning: this manifest installs a cluster-scoped CRD and
+    # a ClusterRole.
+    got="$(shasum -a 256 "${f}.part" | awk '{print $1}')"
+    if [ "${got}" != "${MANIFEST_SHA256}" ]; then
+      rm -f "${f}.part"
+      echo "FAIL: ${MANIFEST_URL}" >&2
+      echo "      sha256 ${got}" >&2
+      echo "      expected ${MANIFEST_SHA256}" >&2
+      echo "      A fresh download does not match the pin, so the release asset's bytes changed." >&2
+      echo "      Re-verify upstream before installing; this manifest carries a cluster-scoped" >&2
+      echo "      CRD and a ClusterRole. Nothing was cached at ${f}." >&2
+      exit 1
+    fi
+    mv "${f}.part" "${f}"
   fi
   echo "${f}"
 }

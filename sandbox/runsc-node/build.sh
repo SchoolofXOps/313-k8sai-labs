@@ -246,7 +246,8 @@ esac
 if ! docker run --rm --entrypoint grep "${IMAGE}:${TAG}" \
        -q 'containerd.runtimes.runsc\]' /etc/containerd/config.toml; then
   echo "FAIL: the runsc runtime handler is not registered in the node's containerd config." >&2
-  echo "      Without it the RuntimeClass silently falls back to runc and a Pod still runs." >&2
+  echo "      Without it no sandbox Pod starts: each waits in ContainerCreating on" >&2
+  echo "      FailedCreatePodSandBox, 'no runtime for \"runsc\" is configured'." >&2
   exit 1
 fi
 

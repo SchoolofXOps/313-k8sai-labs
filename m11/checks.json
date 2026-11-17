@@ -46,11 +46,11 @@
     },
     {
       "id": "controller-image-digest-pinned",
-      "describe": "the running agent-sandbox-controller Pod's imageID carries the controller's recorded index digest. sandbox.yaml names the image by TAG, and the asset's sha256 pins the manifest text, not the image bytes, so the digest is read from the running Pod. If the runtime reports a per-arch manifest digest instead, the live run records which and this entry is re-pinned to it",
+      "describe": "the running agent-sandbox-controller Pod's imageID carries the controller's recorded index digest. sandbox.yaml names the image by TAG, and the asset's sha256 pins the manifest text, not the image bytes, so the digest is read from the running Pod. If the runtime reports a per-arch manifest digest instead, the live run records which and this entry is re-pinned to it. Counted as pinned/total over every controller container, both read from the same imageIDs, so one container on another image fails (review WR-02)",
       "weight": 2,
-      "run": "ids=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-sandbox-system get pods -l app=agent-sandbox-controller -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.imageID}{\"\\n\"}{end}{end}'); case \"$ids\" in \"\") echo controller=none ;; *sha256:28a9cbdbfd6ac0a4e5c7e9261ace1aa30ee2da681cb640dccdfed98e8dd9d98b*) echo controller=pinned ;; *) echo \"controller=other $ids\" ;; esac",
+      "run": "ids=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n agent-sandbox-system get pods -l app=agent-sandbox-controller -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.imageID}{\"\\n\"}{end}{end}'); t=$(printf '%s\\n' \"$ids\" | grep -c .); p=$(printf '%s\\n' \"$ids\" | grep -c '@sha256:28a9cbdbfd6ac0a4e5c7e9261ace1aa30ee2da681cb640dccdfed98e8dd9d98b$'); echo \"controller pinned=$p/$t\"",
       "assert": {
-        "matches": "^controller=pinned$"
+        "matches": "^controller pinned=([1-9][0-9]*)/\\1$"
       }
     },
     {
@@ -75,7 +75,7 @@
       "id": "actor-direct-change-denied-in-audit",
       "describe": "the API server's audit log holds at least one non-read request on ConfigMap target-settings in agent-target by system:serviceaccount:agent-actor:actor, answered 403. Filtered by the authenticated user as well as the object, because a namespace deletion fills the namespace with controller events. Counted by jq, so zero events prints denied=0 and fails",
       "weight": 3,
-      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n kube-system logs kube-apiserver-grid-sandbox-control-plane | jq -Rnr '[inputs | fromjson? | select(type == \"object\" and .kind == \"Event\") | select(.objectRef.namespace == \"agent-target\" and .objectRef.resource == \"configmaps\" and .objectRef.name == \"target-settings\") | select(.user.username == \"system:serviceaccount:agent-actor:actor\") | select(.verb != \"get\" and .verb != \"list\" and .verb != \"watch\") | select(.responseStatus.code == 403) | .auditID] | unique | \"denied=\" + (length | tostring)'",
+      "run": "docker exec grid-sandbox-control-plane cat /var/log/kubernetes/audit/audit.log | jq -Rnr '[inputs | fromjson? | select(type == \"object\" and .kind == \"Event\") | select(.objectRef.namespace == \"agent-target\" and .objectRef.resource == \"configmaps\" and .objectRef.name == \"target-settings\") | select(.user.username == \"system:serviceaccount:agent-actor:actor\") | select(.verb != \"get\" and .verb != \"list\" and .verb != \"watch\") | select(.responseStatus.code == 403) | .auditID] | unique | \"denied=\" + (length | tostring)'",
       "assert": {
         "matches": "^denied=[1-9][0-9]*$"
       }
@@ -84,7 +84,7 @@
       "id": "human-apply-attributed-in-audit",
       "describe": "the audit log holds at least one patch or update on target-settings in agent-target answered 200, by the username kubectl auth whoami prints for the learner. The username is read, never assumed, and a ServiceAccount username fails the anchored pattern",
       "weight": 3,
-      "run": "u=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox auth whoami -o jsonpath='{.status.userInfo.username}'); n=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox -n kube-system logs kube-apiserver-grid-sandbox-control-plane | jq -Rn --arg u \"$u\" '[inputs | fromjson? | select(type == \"object\" and .kind == \"Event\") | select(.objectRef.namespace == \"agent-target\" and .objectRef.resource == \"configmaps\" and .objectRef.name == \"target-settings\") | select(.user.username == $u) | select(.verb == \"patch\" or .verb == \"update\") | select(.responseStatus.code == 200) | .auditID] | unique | length'); printf 'human=%s applied=%s\\n' \"${u:-unread}\" \"${n:-0}\"",
+      "run": "u=$(KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-sandbox.kubeconfig}\" kubectl --context kind-grid-sandbox auth whoami -o jsonpath='{.status.userInfo.username}'); n=$(docker exec grid-sandbox-control-plane cat /var/log/kubernetes/audit/audit.log | jq -Rn --arg u \"$u\" '[inputs | fromjson? | select(type == \"object\" and .kind == \"Event\") | select(.objectRef.namespace == \"agent-target\" and .objectRef.resource == \"configmaps\" and .objectRef.name == \"target-settings\") | select(.user.username == $u) | select(.verb == \"patch\" or .verb == \"update\") | select(.responseStatus.code == 200) | .auditID] | unique | length'); printf 'human=%s applied=%s\\n' \"${u:-unread}\" \"${n:-0}\"",
       "assert": {
         "matches": "^human=(?!system:serviceaccount:)\\S+ applied=[1-9][0-9]*$"
       }

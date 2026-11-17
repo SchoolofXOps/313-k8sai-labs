@@ -1,6 +1,8 @@
 # Deep dive, section 4 — a NoExecute DeviceTaintRule at resource.k8s.io/v1. It selects ONE device by
-# driver, pool and device name. DEVICE_FROM_CLAIM is replaced on the page with the device read from
-# taint-victim-claim's allocation, so the rule taints exactly the victim's device and no other.
+# driver, pool and device name. DEVICE_FROM_CLAIM and POOL_FROM_CLAIM are replaced on the page with the
+# device and pool read from taint-victim-claim's allocation, so the rule taints exactly the victim's
+# device and no other. The page refuses to apply it when either is empty (review WR-05): with no device
+# the selector would match every device in the pool, and NoExecute would evict every Pod holding one.
 apiVersion: resource.k8s.io/v1
 kind: DeviceTaintRule
 metadata:
@@ -8,7 +10,7 @@ metadata:
 spec:
   deviceSelector:
     driver: sim-accelerator.example.com
-    pool: grid-core-worker
+    pool: POOL_FROM_CLAIM
     device: DEVICE_FROM_CLAIM
   taint:
     key: sim-accelerator.example.com/evict-demo

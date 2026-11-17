@@ -5,7 +5,7 @@
 set -euo pipefail
 KAR_COMMIT=c64e5bc8085da207715df96e458f2c6585c9f53e
 KAR_URL="https://raw.githubusercontent.com/cncf/k8s-ai-conformance/${KAR_COMMIT}/docs/AIConformance-1.37.yaml"
-curl -fsSL "$KAR_URL" | LC_ALL=C awk '
+curl -fsSL --connect-timeout 10 --max-time 120 "$KAR_URL" | LC_ALL=C awk '
 BEGIN {
   label["accelerators 1"] = "accelerator-driver-runtime"
   label["accelerators 2"] = "accelerator-sharing"

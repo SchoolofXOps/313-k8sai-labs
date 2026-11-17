@@ -40,8 +40,9 @@ import os
 import ssl
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 K8S_API = "https://kubernetes.default.svc"
@@ -125,7 +126,12 @@ def tool_get_configmap(args):
     name = args.get("name")
     if not name:
         return False, "missing required argument: name"
-    data, code = k8s_request("/api/v1/namespaces/%s/configmaps/%s" % (TARGET_NAMESPACE, name))
+    # Escaped, so a name such as "x?watch=true" or "../../y" stays one path
+    # segment. The scope still comes from RBAC; this keeps the request the one
+    # the tool says it makes.
+    data, code = k8s_request(
+        "/api/v1/namespaces/%s/configmaps/%s" % (TARGET_NAMESPACE, urllib.parse.quote(str(name), safe=""))
+    )
     if code != 200:
         return False, _relay(data, code)
     return True, json.dumps({"code": code, "name": name, "data": data.get("data", {})})
@@ -184,6 +190,9 @@ METHODS = {
 
 
 class MCPHandler(BaseHTTPRequestHandler):
+    # A client that stops sending cannot hold a worker for ever.
+    timeout = 30
+
     def do_GET(self):
         if self.path == "/healthz":
             self._send(200, b"ok", "text/plain")
@@ -194,9 +203,11 @@ class MCPHandler(BaseHTTPRequestHandler):
         if self.path != "/mcp":
             self._send(404, b"", "text/plain")
             return
-        length = int(self.headers.get("Content-Length", "0"))
         try:
+            length = int(self.headers.get("Content-Length", "0"))
             req = json.loads(self.rfile.read(length))
+            if not isinstance(req, dict):
+                raise ValueError("not a JSON-RPC object")
         except ValueError:
             self._rpc({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
             return
@@ -205,7 +216,18 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._rpc({"jsonrpc": "2.0", "id": req.get("id"),
                        "error": {"code": -32601, "message": "Method not found"}})
             return
-        self._rpc({"jsonrpc": "2.0", "id": req.get("id"), "result": method(req.get("params") or {})})
+        params = req.get("params") or {}
+        if not isinstance(params, dict) or not isinstance(params.get("arguments") or {}, dict):
+            self._rpc({"jsonrpc": "2.0", "id": req.get("id"),
+                       "error": {"code": -32602, "message": "Invalid params"}})
+            return
+        try:
+            result = method(params)
+        except Exception as e:  # an API timeout or URLError: answer, never drop the connection
+            self._rpc({"jsonrpc": "2.0", "id": req.get("id"),
+                       "error": {"code": -32603, "message": "Internal error: %s" % e.__class__.__name__}})
+            return
+        self._rpc({"jsonrpc": "2.0", "id": req.get("id"), "result": result})
 
     def _rpc(self, payload):
         self._send(200, json.dumps(payload).encode(), "application/json")
@@ -221,6 +243,10 @@ class MCPHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[mcp-server] " + (fmt % args) + "\n")
 
 
+# Threaded, so one slow client cannot block /healthz and take the Pod out of
+# its Service.
+SERVER_CLASS = ThreadingHTTPServer
+
 if __name__ == "__main__":
     print("mcp-server listening on :%d, target namespace %s" % (PORT, TARGET_NAMESPACE), flush=True)
-    HTTPServer(("0.0.0.0", PORT), MCPHandler).serve_forever()
+    SERVER_CLASS(("0.0.0.0", PORT), MCPHandler).serve_forever()

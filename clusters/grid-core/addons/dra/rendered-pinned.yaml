@@ -6,12 +6,12 @@
 # and with every driver image reference replaced by the resolved
 # manifest-list index digest.
 #
-# Regenerate with:
-#   bash labs/clusters/grid-core/addons/dra/create.sh
+# Regenerate with (a reviewed change only):
+#   REGENERATE=1 bash labs/clusters/grid-core/addons/dra/create.sh
 #
 # It is committed so the applied object set is reviewable in the tree and
-# so the digest-pin gate has a real subject. A clean `git status` after a
-# create run is the evidence that this copy matches the chart at the tag.
+# so the digest-pin gate has a real subject. create.sh applies THIS file,
+# and only after a fresh render at the pinned commit matches it byte for byte.
 #
 # The devices this object set advertises are SYNTHETIC. The driver's own
 # device names, its model string and its 80Gi `memory` capacity are Go
