@@ -1,0 +1,47 @@
+# Module 6 lab — the deliberate failure: a constraint no pair can satisfy.
+#
+# The same two requests and the same matchAttribute as accel-and-nic-one-root, plus CEL selectors
+# that pin the synthetic device to root pci0000:00 and the synthetic NIC to root pci0000:80. No pair
+# shares a root, so the claim stays unallocated and the Pod's FailedScheduling event says the
+# scheduler "cannot allocate all claims". Both objects stay until the lab's Teardown.
+#
+# This template is NOT committed to the platform repository: it exists only to fail.
+# Applied with -n m6-network. Image pinned by index digest; the authority is m6/PINS.md.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: accel-and-nic-split-roots
+spec:
+  spec:
+    devices:
+      requests:
+      - name: accelerator
+        exactly:
+          deviceClassName: sim-accelerator.example.com
+          selectors:
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "pci0000:00"'
+      - name: nic
+        exactly:
+          deviceClassName: sim-nic.example.com
+          selectors:
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "pci0000:80"'
+      constraints:
+      - matchAttribute: "resource.kubernetes.io/pcieRoot"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: split-roots
+spec:
+  restartPolicy: Never
+  containers:
+  - name: holder
+    image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+    resources:
+      claims:
+      - name: devices
+  resourceClaims:
+  - name: devices
+    resourceClaimTemplateName: accel-and-nic-split-roots

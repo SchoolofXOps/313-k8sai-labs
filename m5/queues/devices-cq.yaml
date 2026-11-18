@@ -1,0 +1,23 @@
+# Part 3: the device workload's own queue. Its ONLY flavour is the real worker, and its device quota
+# is 0, so a counted device can never be admitted here. It has no cohort, so nothing can be borrowed.
+# Why a queue of its own: with Kueue's DRA integration switched off, Kueue cannot see the device, so
+# a two-flavour group would send the workload to the simulated fleet, where no ResourceSlice exists
+# and its claim can never be allocated (SPIKE-11, planning/lab-tests/spike-11-kueue-dra-accounting.md).
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: devices-cq
+spec:
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: real-worker
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 1Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "0"

@@ -25,6 +25,8 @@ it is captioned as synthetic. Nothing in this directory qualifies a vendor drive
   workload that consumes it — `training/`, `serving/` or `datalayer/`.
 - Cluster creation. The profile that brings up a node pool is in `clusters/`.
 - Dashboards and alert rules built on the health signal. Those are `observability/`, written by M12.
+- The synthetic NIC's device class. It lands in `dataplane-storage/network/`, written by M6, because
+  this directory has one writer, M4, and M6's co-allocation lab writes only its own directory.
 
 ## Why the owner is named at all
 

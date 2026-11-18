@@ -1,0 +1,65 @@
+# addon-dra-nic — the committed chart values for the SECOND release of
+# dra-example-driver v0.5.0, on the driver's `net` device profile.
+#
+# These values are rendered by create.sh with `helm template` against the
+# IN-TREE chart at the same upstream git tag, the same commit and the same image
+# index digest addon-dra uses. create.sh reads all three out of
+# ../dra/create.sh, so this layer cannot drift onto a different driver build.
+# Nothing installs this chart with `helm install`: the rendered object set is
+# committed beside this file as rendered-pinned.yaml so it is reviewable.
+#
+# WHAT THIS LAYER ADVERTISES, said once and plainly: SYNTHETIC NICs. There is no
+# network card behind any of them, nothing here sends a packet, and nothing the
+# driver reports is a reading from a device. The `net` profile is upstream's
+# own simulation of network devices. It names them `nic-N`, gives them the model
+# string `LATEST-NET-MODEL`, and publishes a `100G` ingress and egress
+# bandwidth capacity. All three are constants in the driver's Go source
+# (internal/profiles/net/net.go:64, :69, :85, :96 at v0.5.0), not readings.
+# STANDARDS.md C15 Group 3 requires a caption wherever that text reaches a page.
+#
+# WHY A SECOND RELEASE AND NOT A CHANGE TO addon-dra. Phase 6 CONTEXT D-28 and
+# D-50: M6's co-allocation lab needs one claim that takes a synthetic device and
+# a synthetic NIC that sit under the same PCIe root. That needs a second driver,
+# with its own name, publishing devices that carry the same
+# `resource.kubernetes.io/pcieRoot` attribute addon-dra's devices carry. A layer
+# that changed addon-dra would change Module 4's lab under it, so this is a new
+# layer, applied on top, and addon-dra is not touched.
+#
+# Every value below is set DELIBERATELY. A lab that asserts a fact must not rest
+# on a default it does not state.
+---
+# THE ONE NAME THIS LAYER CHOOSES. The chart helper puts this single string on
+# the driver the kubelet plugin registers (every ResourceSlice's spec.driver),
+# on the DeviceClass's metadata.name, and inside the DeviceClass's CEL selector
+# (templates/_helpers.tpl:128-130, templates/deviceclass.yaml). The `sim-`
+# prefix and the `example.com` domain arrive on all three together, so a reader
+# of `kubectl get resourceslices -o yaml` sees a driver no real fleet runs. It
+# must differ from addon-dra's `sim-accelerator.example.com`: the CDI vendor
+# (`k8s.<driverName>`), the plugin's socket directory under
+# /var/lib/kubelet/plugins and the DeviceClass name all derive from it, and two
+# releases with one driver name would fight over all three.
+driverName: sim-nic.example.com
+
+# The upstream `net` profile: "Network devices with consumable ingress and
+# egress bandwidth" (chart values.yaml:12-17 at v0.5.0). Its devices allow
+# multiple allocations (net.go:97). This course reads them as synthetic NICs
+# and only ever as that.
+deviceProfile: net
+
+kubeletPlugin:
+  # The number of synthetic NICs advertised per node. The chart default is 8;
+  # four is enough for the co-allocation lab and halves the slice a learner
+  # reads. verify.sh and checks.json ASSERT this number, and verify.sh READS it
+  # out of this file, so the asserted number has a stated source.
+  numDevices: 4
+
+# Publish `resource.kubernetes.io/pcieRoot` on every synthetic NIC. The chart
+# default is `false` (values.yaml:47-50 at v0.5.0: "Enable for cross-profile
+# matchAttribute demos without SR-IOV"), and this attribute is the whole reason
+# the layer exists. With `pcieRoots` left empty the driver assigns its two
+# default roots `pci0000:00` and `pci0000:80` round-robin by device index
+# (internal/profiles/helpers/pcie_topology.go:28, :60) — the same helper, and
+# the same two roots, addon-dra's synthetic devices use. So `nic-0` and the
+# first synthetic device share a root, and a `matchAttribute` constraint on
+# that attribute has a pair to find.
+netPublishPCIeRoot: true

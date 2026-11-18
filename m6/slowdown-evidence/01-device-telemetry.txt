@@ -1,0 +1,40 @@
+# SYNTHETIC — course-authored for Module 6. No device, NIC or fabric produced any line in this file.
+#
+# Device telemetry for one training job, sampled every 10 seconds, written by the course in the
+# columns a device-telemetry exporter publishes. Two runs of the same job: run A on four accelerators
+# on one node, run B on eight accelerators across two nodes. Node names, device names and every
+# figure are invented for this exercise.
+#
+# columns: time  node    device  busy_pct  memory_used_pct  errors_total  throttle_reason
+#
+# run A — 4 accelerators, node-a only
+10:00:00  node-a  accel0  91  71  0  none
+10:00:00  node-a  accel1  90  71  0  none
+10:00:00  node-a  accel2  92  71  0  none
+10:00:00  node-a  accel3  91  71  0  none
+10:00:10  node-a  accel0  92  71  0  none
+10:00:10  node-a  accel1  91  71  0  none
+10:00:10  node-a  accel2  90  71  0  none
+10:00:10  node-a  accel3  92  71  0  none
+#
+# run B — 8 accelerators, node-a and node-b
+11:00:00  node-a  accel0  34  71  0  none
+11:00:00  node-a  accel1  33  71  0  none
+11:00:00  node-a  accel2  35  71  0  none
+11:00:00  node-a  accel3  34  71  0  none
+11:00:00  node-b  accel4  33  71  0  none
+11:00:00  node-b  accel5  34  71  0  none
+11:00:00  node-b  accel6  35  71  0  none
+11:00:00  node-b  accel7  33  71  0  none
+11:00:10  node-a  accel0  36  71  0  none
+11:00:10  node-a  accel1  34  71  0  none
+11:00:10  node-a  accel2  33  71  0  none
+11:00:10  node-a  accel3  35  71  0  none
+11:00:10  node-b  accel4  34  71  0  none
+11:00:10  node-b  accel5  36  71  0  none
+11:00:10  node-b  accel6  33  71  0  none
+11:00:10  node-b  accel7  34  71  0  none
+#
+# summary row the exporter's dashboard would show
+# run A: mean busy 91, errors 0, no throttling
+# run B: mean busy 34, errors 0, no throttling

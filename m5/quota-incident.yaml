@@ -1,0 +1,33 @@
+# Part 5: two quota systems that disagree. The namespace ResourceQuota allows 8 cpu of requests in
+# product, and product-serve already holds them; product-cq still has quota left. The Job is
+# suspended, so Kueue decides first and admits it, and only then does the Job controller try to
+# create the Pod, which the namespace quota refuses.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: product-quota
+  namespace: product
+spec:
+  hard:
+    requests.cpu: "8"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: quota-collision
+  namespace: product
+  labels:
+    kueue.x-k8s.io/queue-name: product-queue
+spec:
+  suspend: true
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "1"
+              memory: 256Mi

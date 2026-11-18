@@ -1,0 +1,23 @@
+# SYNTHETIC — course-authored for Module 6. No device, NIC or fabric produced any line in this file.
+#
+# Per-step timing from the training script's own logger, rank 0 of each run, written by the course
+# in the form a training loop commonly logs it. Every figure is invented for this exercise. All
+# times are in milliseconds and cover one optimizer step.
+#
+# columns: step  data_wait_ms  forward_backward_ms  allreduce_wait_ms  step_total_ms
+#
+# run A — 4 accelerators, node-a only
+step 1200  data_wait 12  forward_backward 410  allreduce_wait 38   step_total 460
+step 1201  data_wait 11  forward_backward 409  allreduce_wait 40   step_total 460
+step 1202  data_wait 13  forward_backward 411  allreduce_wait 37   step_total 461
+step 1203  data_wait 12  forward_backward 410  allreduce_wait 39   step_total 461
+#
+# run B — 8 accelerators, node-a and node-b, same global batch split eight ways
+step 1200  data_wait 12  forward_backward 205  allreduce_wait 1010 step_total 1227
+step 1201  data_wait 11  forward_backward 206  allreduce_wait 1032 step_total 1249
+step 1202  data_wait 13  forward_backward 204  allreduce_wait 998  step_total 1215
+step 1203  data_wait 12  forward_backward 205  allreduce_wait 1021 step_total 1238
+#
+# the data loader's own queue: batches ready ahead of the step, sampled at each step
+# run A: prefetch_queue_depth 8 of 8 at every step
+# run B: prefetch_queue_depth 8 of 8 at every step

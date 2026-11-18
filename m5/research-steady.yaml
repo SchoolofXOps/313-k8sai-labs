@@ -1,0 +1,30 @@
+# Part 1: research's steady group, admitted inside research's own quota (8 cpu of 10). Two 4-cpu
+# Pods cannot share one simulated node (8 is more than the 7.9 cpu free on each), so they land on
+# two different nodes.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: research-steady
+  namespace: research
+  labels:
+    kueue.x-k8s.io/queue-name: research-queue
+    kueue.x-k8s.io/priority-class: tenant-critical
+spec:
+  replicas: 2
+  serviceName: research-steady
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: research-steady
+  template:
+    metadata:
+      labels:
+        app: research-steady
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "4"
+              memory: 1Gi

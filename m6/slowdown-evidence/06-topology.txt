@@ -1,0 +1,23 @@
+# SYNTHETIC — course-authored for Module 6. No device, NIC or fabric produced any line in this file.
+#
+# Where each device on node-a sits, and which devices the training container on node-a was given,
+# written by the course from a node inventory and the Pod's own device list. PCIe roots, NUMA nodes
+# and names are invented for this exercise. node-b is laid out the same way.
+#
+# node-a host inventory
+#   device   kind                 pcie_root     numa_node
+#   accel0   accelerator          pci0000:00    0
+#   accel1   accelerator          pci0000:00    0
+#   accel2   accelerator          pci0000:00    0
+#   accel3   accelerator          pci0000:00    0
+#   eth0     ordinary NIC         pci0000:00    0
+#   rdma0    RDMA NIC (ib0)       pci0000:80    1
+#
+# what the training container on node-a was given (its device list and network interfaces)
+#   accelerators: accel0 accel1 accel2 accel3
+#   network interfaces: eth0
+#   RDMA devices: none
+#
+# the claim the training Pod on node-a was allocated from
+#   requests:     accelerator, count 4, deviceClassName accelerators.example.com
+#   constraints:  none

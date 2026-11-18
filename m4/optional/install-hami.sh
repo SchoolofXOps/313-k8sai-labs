@@ -120,7 +120,7 @@ ${CLUSTER_NAME}
 "*) : ;;
   *)
     echo "FAIL: kind cluster '${CLUSTER_NAME}' not found — this script installs onto a running cluster." >&2
-    echo "      Create it first: bash grid-platform/clusters/grid-core/create.sh" >&2
+    echo "      Create it first: bash ${LABS_DIR}/clusters/grid-core/create.sh" >&2
     exit 1
     ;;
 esac
@@ -139,7 +139,7 @@ done
 _mode="$(kc get namespace "${NS_MOCK}" -o jsonpath="{.metadata.annotations.addon-nvml-mock\.example\.com/consumers}" 2>/dev/null || true)"
 if [ "${_mode}" != "none" ]; then
   echo "FAIL: the mock layer is not applied in mock-only mode (read '${_mode:-<absent>}' on namespace '${NS_MOCK}')." >&2
-  echo "      Apply it first:  NVML_MOCK_CONSUMERS=none bash clusters/grid-core/addons/nvml-mock/create.sh" >&2
+  echo "      Apply it first:  NVML_MOCK_CONSUMERS=none bash ${LABS_DIR}/clusters/grid-core/addons/nvml-mock/create.sh" >&2
   exit 1
 fi
 if ! kc -n "${NS_MOCK}" wait --for=condition=Ready pod -l app.kubernetes.io/name=nvml-mock --timeout=120s >/dev/null 2>&1; then
@@ -307,7 +307,7 @@ fi
 # here: kind preloads that exact image under an `import-*` name, so containerd reports that name
 # in its imageID (SPIKE-10 § "The kube-scheduler imageID"); its spec carries the pin.
 _ids="$(kc -n "${NS_HAMI}" get pods -l app.kubernetes.io/name=hami --field-selector status.phase=Running -o json \
-        | jq -r '[.items[].status.containerStatuses[] | select(.name != "kube-scheduler") | .imageID] | join(" ")')"
+        | jq -r '[.items[].status | (.containerStatuses // [])[] | select(.name != "kube-scheduler") | .imageID] | join(" ")' 2>/dev/null)" || _ids=""
 _n=0
 _ok=0
 for _id in ${_ids}; do
@@ -319,7 +319,7 @@ if [ "${_n}" -lt 3 ] || [ "${_ok}" -ne "${_n}" ]; then
   echo "      Running imageIDs: ${_ids:-<none>}" >&2
   exit 1
 fi
-_ks="$(kc -n "${NS_HAMI}" get deploy hami-scheduler -o jsonpath='{.spec.template.spec.containers[?(@.name=="kube-scheduler")].image}')"
+_ks="$(kc -n "${NS_HAMI}" get deploy hami-scheduler -o jsonpath='{.spec.template.spec.containers[?(@.name=="kube-scheduler")].image}' 2>/dev/null)" || _ks=""
 if [ "${_ks}" != "${KSCHED_IMAGE}" ]; then
   echo "FAIL: the kube-scheduler container asks for '${_ks}', not the registered ${KSCHED_IMAGE}." >&2
   exit 1

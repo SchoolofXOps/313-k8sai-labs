@@ -94,6 +94,8 @@ ENVOY_IMAGE="${ENVOY_IMAGE:-envoyproxy/envoy@sha256:85500e28ed088ec39ff0adc1be3d
 # port-forward this script starts and kills.
 FWD_ENVOY_PORT="${FWD_ENVOY_PORT:-18081}"
 FWD_POD_PORT="${FWD_POD_PORT:-18000}"
+# Seconds start_forward waits for a forward to answer before giving up on it.
+FWD_WAIT_SECONDS="${FWD_WAIT_SECONDS:-20}"
 
 kc() { kubectl --context "${CONTEXT}" "$@"; }
 kcn() { kubectl --context "${CONTEXT}" -n "${NAMESPACE}" "$@"; }
@@ -431,13 +433,26 @@ if mode == "observe":
 # Read these rather than the EPP's logs: the per-pod subscriber's refused dials
 # spam ERROR lines continuously while the bound socket ingests normally, so the
 # logs suggest failure exactly when ingestion is working (see router.yaml).
+#
+# The read is RECORDED, never asserted, so a forward that does not come up must
+# not end the experiment. It is asked of start_forward in its SOFT mode, which
+# returns 1 instead of calling `fail`: `fail` exits the current shell, and no
+# `|| true` can catch an exit (review WR-05 of the 2026-11-17 addition — one slow
+# forward used to end a measured run halfway, with its FAIL line discarded).
+# Two attempts, then a line that says why the read is missing.
 index_counters() {
-  local label="$1" out
-  start_forward "svc/sim-router-epp" 19090 9090 >/dev/null 2>&1 || true
-  out="$(curl -s --max-time 10 "http://127.0.0.1:${FWD_PORT}/metrics" 2>/dev/null \
-         | grep -E '^llm_d_epp_kv_cache_index_(admissions|evictions|lookup_requests|lookup_hits)_total' || true)"
-  stop_forward
-  if [ -z "${out}" ]; then
+  local label="$1" out="" up=no attempt
+  for attempt in 1 2; do
+    if start_forward "svc/sim-router-epp" 19090 9090 soft >/dev/null 2>&1; then up=yes; break; fi
+  done
+  if [ "${up}" = yes ]; then
+    out="$(curl -s --max-time 10 "http://127.0.0.1:${FWD_PORT}/metrics" 2>/dev/null \
+           | grep -E '^llm_d_epp_kv_cache_index_(admissions|evictions|lookup_requests|lookup_hits)_total' || true)"
+    stop_forward
+  fi
+  if [ "${up}" != yes ]; then
+    echo "  index[${label}]: unreadable (the metrics forward to svc/sim-router-epp did not come up after 2 attempts)"
+  elif [ -z "${out}" ]; then
     echo "  index[${label}]: unreadable (no counters scraped from :9090)"
   else
     echo "  index[${label}]:"
@@ -469,7 +484,9 @@ FWD_PID=""
 FWD_PORT=""
 FWD_SEQ=0
 start_forward() {
-  local target="$1" base="$2" rport="$3" i
+  # start_forward <target> <base port> <remote port> [soft]
+  # soft: a forward that does not come up returns 1 instead of calling `fail`.
+  local target="$1" base="$2" rport="$3" soft="${4:-}" i
   # Walk forward to the first port nothing is listening on. The invariant that
   # matters is "this port is not already serving something else" — satisfied by
   # SKIPPING a busy port, not by refusing to run. A hard failure here was wrong:
@@ -482,21 +499,27 @@ start_forward() {
   FWD_PORT=$((base + FWD_SEQ))
   while nc -z 127.0.0.1 "${FWD_PORT}" 2>/dev/null; do
     tries=$((tries + 1))
-    [ "${tries}" -le 50 ] \
-      || fail "could not find a free local port in ${base}+1..${base}+50 to forward ${target}; something is listening across the whole range."
+    if [ "${tries}" -gt 50 ]; then
+      [ "${soft}" = soft ] && return 1
+      fail "could not find a free local port in ${base}+1..${base}+50 to forward ${target}; something is listening across the whole range."
+    fi
     FWD_SEQ=$((FWD_SEQ + 1))
     FWD_PORT=$((base + FWD_SEQ))
   done
   kcn port-forward "${target}" "${FWD_PORT}:${rport}" >/dev/null 2>&1 &
   FWD_PID=$!
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  i=0
+  while [ "${i}" -lt "${FWD_WAIT_SECONDS}" ]; do
     if nc -z 127.0.0.1 "${FWD_PORT}" 2>/dev/null; then
       echo "    (forward ${target} -> 127.0.0.1:${FWD_PORT})"
       return 0
     fi
     sleep 1
+    i=$((i + 1))
   done
-  fail "port-forward to ${target} never came up on 127.0.0.1:${FWD_PORT}"
+  stop_forward
+  [ "${soft}" = soft ] && return 1
+  fail "port-forward to ${target} never came up on 127.0.0.1:${FWD_PORT} within ${FWD_WAIT_SECONDS}s"
 }
 stop_forward() {
   if [ -n "${FWD_PID}" ]; then

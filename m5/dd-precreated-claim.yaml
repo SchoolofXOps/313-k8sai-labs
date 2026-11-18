@@ -1,0 +1,71 @@
+# Deep dive, topic 4: a Pod that names a claim created ahead of time, through resourceClaimName.
+# claims-cq has a device quota of 1, so quota cannot be the reason for what happens.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m5-claims
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: claims-cq
+spec:
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: real-worker
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 1Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "1"
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: claims-queue
+  namespace: m5-claims
+spec:
+  clusterQueue: claims-cq
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: pre-made-claim
+  namespace: m5-claims
+spec:
+  devices:
+    requests:
+      - name: accel
+        exactly:
+          deviceClassName: sim-accelerator.example.com
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: precreated-claim
+  namespace: m5-claims
+  labels:
+    kueue.x-k8s.io/queue-name: claims-queue
+spec:
+  suspend: true
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            claims:
+              - name: accel
+      resourceClaims:
+        - name: accel
+          resourceClaimName: pre-made-claim

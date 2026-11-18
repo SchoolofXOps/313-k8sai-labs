@@ -1,0 +1,9 @@
+# The one real worker: the only node with a kubelet, so the only node any ResourceSlice is
+# published on. A workload that claims a synthetic device can only run here.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: real-worker
+spec:
+  nodeLabels:
+    kubernetes.io/hostname: grid-core-worker

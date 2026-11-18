@@ -1,0 +1,126 @@
+{
+  "_why": "M5 lab end state, read after \"Commit the capacity layer\" and before \"Teardown\". SIMULATED: the control plane, the kube-scheduler's binding decisions and Kueue's admission, preemption and accounting are real; the simulated fleet's kubelets are faked by kwok, and every device is a synthetic device published by the upstream example driver. Object state only (TRUST-06, STANDARDS.md C26): Kueue Workload conditions and reasons read through workloads.kueue.x-k8s.io, .status.admission and .status.resourceRequests on a Kueue Workload, .spec.nodeName and the topology label it resolves to, events by reason, and the learner's Grid files. No Pod phase is read and no number is read as performance. Every kubectl runs with KUBECONFIG exported and --context kind-grid-core. Every matches is anchored and in JavaScript regex dialect. Part 3's two transient postures (integration off, mapping removed) survive to the end state only in the learner's accounting record, so two entries read that file; the mapped posture is also read live. Paths are relative to the learner tree (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m5/checks.json).",
+  "truth_contract": "SIMULATED",
+  "checks": [
+    {
+      "id": "two-kinds-read-by-qualified-name",
+      "describe": "part 0: two API groups serve a kind named workloads, kueue.x-k8s.io and scheduling.k8s.io, and the qualified read workloads.kueue.x-k8s.io finds the probe's one Kueue Workload in m5-collision — the read that the unqualified form misses",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; k=$(kubectl --context kind-grid-core api-resources --no-headers 2>/dev/null | awk '$1 == \"workloads\" { print $(NF-2) }' | sort -u | tr '\\n' ' '); n=0; case \"$k\" in *kueue.x-k8s.io/v1beta2*) n=$((n+1)) ;; esac; case \"$k\" in *scheduling.k8s.io/v1beta1*) n=$((n+1)) ;; esac; w=$(kubectl --context kind-grid-core -n m5-collision get workloads.kueue.x-k8s.io -o json 2>/dev/null | jq '.items | length'); echo \"kinds=$n kueue_in_m5_collision=${w:-0}\"",
+      "assert": {
+        "matches": "^kinds=2 kueue_in_m5_collision=1$"
+      }
+    },
+    {
+      "id": "three-tenants-one-cohort",
+      "describe": "part 1: research-cq, data-cq and product-cq all name the cohort northwind-tenants, and each tenant namespace's LocalQueue points at its own ClusterQueue",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; c=$(kubectl --context kind-grid-core get clusterqueues.kueue.x-k8s.io research-cq data-cq product-cq -o json 2>/dev/null | jq -r '[.items[] | select(.spec.cohortName == \"northwind-tenants\")] | \"clusterqueues=\" + (length | tostring) + \" cohort=\" + ([.[].spec.cohortName] | unique | join(\",\"))'); l=0; for t in research data product; do q=$(kubectl --context kind-grid-core -n \"$t\" get localqueues.kueue.x-k8s.io \"$t-queue\" -o jsonpath='{.spec.clusterQueue}' 2>/dev/null); [ \"$q\" = \"$t-cq\" ] && l=$((l+1)); done; echo \"${c:-clusterqueues=0 cohort=} localqueues=$l\"",
+      "assert": {
+        "matches": "^clusterqueues=3 cohort=northwind-tenants localqueues=3$"
+      }
+    },
+    {
+      "id": "unqueued-gang-seven-of-eight-bound",
+      "describe": "part 1, the 7-of-8 trap: StatefulSet gang-unqueued in data has eight Pods and seven of them carry .spec.nodeName — placed one Pod at a time, with nothing to hold the group together",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n data get pods -l app=gang-unqueued -o json | jq -r '\"pods=\" + (.items | length | tostring) + \" bound=\" + ([.items[] | select(.spec.nodeName != null)] | length | tostring)'",
+      "assert": {
+        "matches": "^pods=8 bound=7$"
+      }
+    },
+    {
+      "id": "queued-gang-none-bound-until-admitted",
+      "describe": "part 1: the identical group through Kueue — StatefulSet gang-queued's eight Pods exist, scheduling-gated, none carries .spec.nodeName, and its Kueue Workload has no admission. The Pod count is printed first, so an absent group cannot read as none bound",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; p=$(kubectl --context kind-grid-core -n data get pods -l app=gang-queued -o json | jq -r '\"pods=\" + (.items | length | tostring) + \" bound=\" + ([.items[] | select(.spec.nodeName != null)] | length | tostring)'); a=$(kubectl --context kind-grid-core -n data get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .name | startswith(\"gang-queued\")))] | if length == 0 then \"absent\" elif all(.[]; .status.admission == null) then \"no\" else \"yes\" end'); echo \"$p admitted=$a\"",
+      "assert": {
+        "matches": "^pods=8 bound=0 admitted=no$"
+      }
+    },
+    {
+      "id": "low-priority-preempted-with-reason",
+      "describe": "part 2: of research's three tenant-batch groups, exactly one Kueue Workload carries the Preempted condition with reason InCohortReclamation — product took back the quota research had borrowed from it",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n research get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .name | test(\"^research-batch-[abc]\")))] as $b | [$b[] | .status.conditions[]? | select(.type == \"Preempted\" and .status == \"True\")] as $p | \"preempted=\" + ($p | length | tostring) + \" reason=\" + ([$p[].reason] | unique | join(\",\"))'",
+      "assert": {
+        "matches": "^preempted=1 reason=InCohortReclamation$"
+      }
+    },
+    {
+      "id": "borrowing-stayed-in-cohort",
+      "describe": "part 2: at least one tenant ClusterQueue borrows simulated-fleet cpu, the cpu borrowed is no more than the other members could lend (product's lendingLimit honoured), and product-serve's Kueue Workload is admitted",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; q=$(kubectl --context kind-grid-core get clusterqueues.kueue.x-k8s.io research-cq data-cq product-cq -o json | jq -r 'def num: if type == \"string\" then (if test(\"m$\") then (sub(\"m$\"; \"\") | tonumber / 1000) else tonumber end) else . end; [.items[] | ([.spec.resourceGroups[].flavors[] | select(.name == \"sim-fleet\") | .resources[] | select(.name == \"cpu\")] | first) as $r | {nom: ($r.nominalQuota | num), lend: (if $r.lendingLimit == null then null else ($r.lendingLimit | num) end), used: (([.status.flavorsUsage[]? | select(.name == \"sim-fleet\") | .resources[]? | select(.name == \"cpu\") | .total] | first // 0) | num), bor: (([.status.flavorsUsage[]? | select(.name == \"sim-fleet\") | .resources[]? | select(.name == \"cpu\") | .borrowed] | first // 0) | num)}] as $q | ([$q[] | .bor] | add) as $borrowed | ([$q[] | (.nom - (if .used < .nom then .used else .nom end)) as $idle | (if .lend == null or $idle < .lend then $idle else .lend end)] | add) as $lendable | ([$q[] | select(.bor > 0)] | length) as $n | \"borrowers=\" + ($n | tostring) + \" invariant=\" + (if $n >= 1 and $borrowed <= $lendable then \"ok\" else \"VIOLATED\" end)'); s=$(kubectl --context kind-grid-core -n product get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .name | startswith(\"product-serve\")))] | if length == 0 then \"absent\" elif all(.[]; .status.admission != null) then \"admitted\" else \"pending\" end'); echo \"$q product=$s\"",
+      "assert": {
+        "matches": "^borrowers=[1-9][0-9]* invariant=ok product=admitted$"
+      }
+    },
+    {
+      "id": "ghost-flavor-pods-unschedulable-by-selector",
+      "describe": "part 2's deliberate failure: product-ghost's Kueue Workload is admitted on ghost-flavor, its Pod carries the injected node selector northwind.example.com/pool=retired and no .spec.nodeName, and a FailedScheduling event names the node selector",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; w=$(kubectl --context kind-grid-core -n product get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .name | startswith(\"product-ghost\")))] | first | if . == null then \"admitted=absent flavor=none\" else \"admitted=\" + (if .status.admission == null then \"no\" else \"yes\" end) + \" flavor=\" + ((.status.admission.podSetAssignments[0].flavors.cpu) // \"none\") end'); pj=$(kubectl --context kind-grid-core -n product get pods -l app=product-ghost -o json); b=$(printf '%s' \"$pj\" | jq '[.items[] | select(.spec.nodeName != null)] | length'); s=$(printf '%s' \"$pj\" | jq -r 'if ([.items[] | select(.spec.nodeSelector[\"northwind.example.com/pool\"] == \"retired\")] | length) > 0 then \"injected\" else \"absent\" end'); e=$(kubectl --context kind-grid-core -n product get events --field-selector reason=FailedScheduling -o json | jq -r '[.items[] | select(.involvedObject.name | startswith(\"product-ghost\")) | select(.message | test(\"node affinity/selector\"))] | if length > 0 then \"FailedScheduling\" else \"none\" end'); echo \"$w bound=$b selector=$s event=$e\"",
+      "assert": {
+        "matches": "^admitted=yes flavor=ghost-flavor bound=0 selector=injected event=FailedScheduling$"
+      }
+    },
+    {
+      "id": "device-absent-from-usage-when-integration-off",
+      "describe": "part 3, the before state: the learner's accounting record carries the integration-off line copied from the projection, admitted with the device absent from the Kueue Workload's resourceUsage. The posture is transient, so the record is its evidence at the end state",
+      "run": "f=grid-platform/capacity/kueue/accounting-record.md; l=$(sed -n 's/^integration-off:[[:space:]]*//p' \"$f\" 2>/dev/null | head -1); a=$(printf '%s\\n' \"$l\" | sed -n 's/.*admitted=\\([a-z]*\\).*/\\1/p'); u=$(printf '%s\\n' \"$l\" | sed -n 's/.*device_in_usage=\\([a-z]*\\).*/\\1/p'); echo \"posture=integration-off admitted=${a:-missing} device_in_usage=${u:-missing}\"",
+      "assert": {
+        "matches": "^posture=integration-off admitted=yes device_in_usage=false$"
+      }
+    },
+    {
+      "id": "device-charged-when-mapped",
+      "describe": "part 3, the after state, read live: devices-over-quota's Kueue Workload in m5-devices is not admitted, the device quota resource is present in .status.resourceRequests, and QuotaReserved is False with reason ExceedsMaxQuota — the device was counted, and the count refused it",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m5-devices get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .kind == \"Job\" and .name == \"devices-over-quota\"))] | first | if . == null then \"absent\" else \"admitted=\" + (if .status.admission == null then \"no\" else \"yes\" end) + \" device_in_requests=\" + ((.status.resourceRequests[0].resources // {}) | has(\"example.com/sim-accelerator\") | tostring) + \" qr=\" + ([.status.conditions[]? | select(.type == \"QuotaReserved\") | .reason] | first // \"none\") end'",
+      "assert": {
+        "matches": "^admitted=no device_in_requests=true qr=ExceedsMaxQuota$"
+      }
+    },
+    {
+      "id": "unmapped-class-refused-with-reason",
+      "describe": "part 3's deliberate failure: the learner's accounting record carries the unmapped-defaults line, QuotaReserved reason DRAResourcesUnresolved — with the mapping removed the device workload was refused, not admitted free",
+      "run": "f=grid-platform/capacity/kueue/accounting-record.md; r=$(sed -n 's/^unmapped-defaults:.*qr=\\([A-Za-z]*\\).*/\\1/p' \"$f\" 2>/dev/null | head -1); echo \"posture=unmapped qr=${r:-missing}\"",
+      "assert": {
+        "matches": "^posture=unmapped qr=DRAResourcesUnresolved$"
+      }
+    },
+    {
+      "id": "defaults-restored-and-read-back",
+      "describe": "part 3, the restore: the live Configuration maps the DRA layer's DeviceClass again (read by the layer's own probe), sets no KueueDRA gate to false, and the learner recorded the new controller Pod's gate read-back in grid-platform/capacity/kueue/gates-readback.txt",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; N=$(sed -n 's/^driverName:[[:space:]]*\\([^[:space:]#]\\{1,\\}\\).*$/\\1/p' clusters/grid-core/addons/dra/values.yaml | head -1); T=$(mktemp); kubectl --context kind-grid-core -n kueue-system get cm kueue-manager-config -o jsonpath='{.data.controller_manager_config\\.yaml}' > \"$T\"; m=$(node clusters/grid-core/addons/kueue-kwok/kueue-config-probe.mjs \"$T\" \"$N\" 2>/dev/null | sed -n 's/.* maps_deviceclass=\\([a-z]*\\).*/\\1/p'); g=$(grep -cE '^[[:space:]]+KueueDRA[A-Za-z]*:[[:space:]]*false' \"$T\"); rm -f \"$T\"; c=$(grep -c 'KueueDRAIntegration:true' grid-platform/capacity/kueue/gates-readback.txt 2>/dev/null); r=missing; [ \"${c:-0}\" -ge 1 ] && r=recorded; echo \"maps_deviceclass=${m:-none} dra_gates_off=$g readback=$r\"",
+      "assert": {
+        "matches": "^maps_deviceclass=yes dra_gates_off=0 readback=recorded$"
+      }
+    },
+    {
+      "id": "tas-gang-inside-one-block",
+      "describe": "part 4: every Pod of block-gang-a, -b and -c is bound, each group's .spec.nodeName values resolve to ONE cloud.provider.com/topology-block label, the three groups sit in three different blocks, and the preferred-block group scatter-gang spans two",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; T=$(mktemp); kubectl --context kind-grid-core get nodes -o json > \"$T\"; kubectl --context kind-grid-core -n m5-topology get pods -o json | jq -r --slurpfile nodes \"$T\" --arg k cloud.provider.com/topology-block '($nodes[0].items | map({(.metadata.name): .metadata.labels[$k]}) | add) as $m | [.items[] | select(.spec.nodeName != null) | {g: .metadata.labels.app, b: $m[.spec.nodeName]}] as $p | [(\"block-gang-a\", \"block-gang-b\", \"block-gang-c\") as $g | [$p[] | select(.g == $g) | .b]] as $rb | \"required_gangs=\" + ([$rb[] | select(length == 4)] | length | tostring) + \" each_in_one_block=\" + (if all($rb[]; (unique | length) == 1) then \"yes\" else \"no\" end) + \" distinct_blocks=\" + ([$rb[][]] | unique | length | tostring) + \" scatter_blocks=\" + ([$p[] | select(.g == \"scatter-gang\") | .b] | unique | length | tostring)'; rm -f \"$T\"",
+      "assert": {
+        "matches": "^required_gangs=3 each_in_one_block=yes distinct_blocks=3 scatter_blocks=2$"
+      }
+    },
+    {
+      "id": "tas-negative-control-refused",
+      "describe": "part 4, the negative control: block-gang-refused's Kueue Workload has no admission, its QuotaReserved reason is WaitingForQuota and that condition's message names the topology as what does not fit — refused by topology, not by quota. The reason is the one a quota refusal also carries, so the reason is asserted first and the message's topology clause is what tells the two apart (run 1, plan 06-12: the layer's TopologyPlacementFailed belongs to a group no domain could ever hold, not to one that waits for a block to free up)",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m5-topology get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .name | startswith(\"block-gang-refused\")))] | first | if . == null then \"refused=absent\" else ([.status.conditions[]? | select(.type == \"QuotaReserved\")] | first // {}) as $q | \"refused=\" + (if .status.admission == null then \"null-admission\" else \"ADMITTED\" end) + \":\" + ($q.reason // \"noreason\") + \":\" + (if (($q.message // \"\") | test(\"topology .northwind-topology. allows to fit only\")) then \"topology\" else \"not-topology\" end) end'",
+      "assert": {
+        "matches": "^refused=null-admission:WaitingForQuota:topology$"
+      }
+    },
+    {
+      "id": "resourcequota-refuses-admitted-job",
+      "describe": "part 5: Job quota-collision's Kueue Workload in product is admitted, the Job has no Pod, and its FailedCreate events name the exceeded namespace quota product-quota — two quota systems that disagree. Events expire after an hour, so this runs in the same sitting as the lab",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; w=$(kubectl --context kind-grid-core -n product get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .kind == \"Job\" and .name == \"quota-collision\"))] | first | if . == null then \"absent\" elif .status.admission == null then \"no\" else \"yes\" end'); p=$(kubectl --context kind-grid-core -n product get pods -l batch.kubernetes.io/job-name=quota-collision -o json | jq '.items | length'); e=$(kubectl --context kind-grid-core -n product get events --field-selector involvedObject.name=quota-collision,reason=FailedCreate -o json | jq -r '[.items[] | select(.message | test(\"exceeded quota: product-quota\"))] | if length > 0 then \"FailedCreate quota=product-quota\" else \"none quota=none\" end'); echo \"admitted=$w pods=$p event=$e\"",
+      "assert": {
+        "matches": "^admitted=yes pods=0 event=FailedCreate quota=product-quota$"
+      }
+    },
+    {
+      "id": "capacity-layer-committed",
+      "describe": "the commit step: each of the five capacity subdirectories holds at least one committed file other than a README, and each of the three addon-kueue-kwok wrappers, comment lines stripped, execs the single-source layer script of the same name",
+      "run": "o=\"\"; for d in flavors queues priority topology kueue; do c=$(git ls-files \"grid-platform/capacity/$d\" | grep -vc '/README\\.md$'); if [ \"${c:-0}\" -ge 1 ]; then o=\"$o $d=yes\"; else o=\"$o $d=no\"; fi; done; for n in create verify teardown; do c=$(grep -v '^[[:space:]]*#' \"grid-platform/clusters/addon-kueue-kwok/$n.sh\" 2>/dev/null | grep -F \"/clusters/grid-core/addons/kueue-kwok/$n.sh\" | grep -c '^exec '); if [ \"$c\" = \"1\" ]; then o=\"$o $n=exec\"; else o=\"$o $n=missing\"; fi; done; echo \"${o# }\"",
+      "assert": {
+        "matches": "^flavors=yes queues=yes priority=yes topology=yes kueue=yes create=exec verify=exec teardown=exec$"
+      }
+    }
+  ]
+}

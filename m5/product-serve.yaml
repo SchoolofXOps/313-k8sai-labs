@@ -1,0 +1,29 @@
+# Part 2: product's serving group, 8 cpu, inside product's own nominal 10. Starved until
+# m5/starvation-fix.yaml gives product-cq a preemption policy.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: product-serve
+  namespace: product
+  labels:
+    kueue.x-k8s.io/queue-name: product-queue
+    kueue.x-k8s.io/priority-class: tenant-critical
+spec:
+  replicas: 16
+  serviceName: product-serve
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: product-serve
+  template:
+    metadata:
+      labels:
+        app: product-serve
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 256Mi

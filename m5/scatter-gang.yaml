@@ -1,0 +1,30 @@
+# Part 4: identical again, but the block is PREFERRED rather than required, so once no block has
+# room for four the group is admitted across blocks.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: scatter-gang
+  namespace: m5-topology
+  labels:
+    kueue.x-k8s.io/queue-name: topology-queue
+spec:
+  replicas: 4
+  serviceName: scatter-gang
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: scatter-gang
+  template:
+    metadata:
+      labels:
+        app: scatter-gang
+      annotations:
+        kueue.x-k8s.io/podset-preferred-topology: cloud.provider.com/topology-block
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 12Gi

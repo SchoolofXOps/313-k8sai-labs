@@ -9,8 +9,10 @@ waiting for bytes.
 | `StorageClass` manifests for each measured delivery path | M6 |
 | the node-local cache tier configuration | M6 |
 | checkpoint and shared-volume claims, with their access modes stated | M6 |
-| `NetworkAttachmentDefinition` manifests and the secondary-interface wiring | M6 |
-| the storage measurement harness configuration, published beside any figure it produced | M6 |
+| each storage measurement, one directory per run under `measurements/<run-id>/`, with the harness configuration that produced it beside the figure and a written conclusion | M6 |
+| the synthetic NIC's `DeviceClass` reference and the two-request `ResourceClaimTemplate` that claims a device and a NIC under one PCIe root, under `network/` | M6 |
+| the classification of a distributed-slowdown evidence bundle, under `diagnosis/` | M6 |
+| `NetworkAttachmentDefinition` manifests and the secondary-interface wiring: taught on the lesson page by manifest reading and not committed, because no lab-viability row approves a Multus install and nothing unverifiable is committed as platform configuration | M6 |
 
 Any throughput figure committed here carries the harness configuration that produced it and the
 machine it was produced on. Two measured limits are already on record and constrain what this
@@ -27,7 +29,10 @@ claim.
 - The vector database's own volume claim. It ships with the database in `datalayer/`.
 - Model artifact storage for the serving path. The claim a model server mounts lives in `serving/`
   beside the server that mounts it.
-- Device inventory for the network interface. A device class for a NIC is `nodes/`.
+- Device inventory for an accelerator. The accelerator's `DeviceClass` and its driver values are
+  `nodes/`, written by M4. The synthetic NIC's class reference is not inventory for that directory: it
+  lands here, in `network/`, because each directory has exactly one writer, `nodes/` belongs to M4,
+  and M6 writes only this one.
 
 ## Why the owner is named at all
 

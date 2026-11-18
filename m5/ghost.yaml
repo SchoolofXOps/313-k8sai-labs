@@ -1,0 +1,54 @@
+# Part 2's deliberate failure: a ClusterQueue whose only flavour matches no node. Kueue admits on
+# quota and does not check a non-topology flavour's labels against the nodes, so the admission looks
+# healthy; the Pod it releases can never be placed. Never committed to the platform repository.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: ghost-cq
+spec:
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: ghost-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "4"
+            - name: memory
+              nominalQuota: 8Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: ghost-queue
+  namespace: product
+spec:
+  clusterQueue: ghost-cq
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: product-ghost
+  namespace: product
+  labels:
+    kueue.x-k8s.io/queue-name: ghost-queue
+spec:
+  replicas: 1
+  serviceName: product-ghost
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: product-ghost
+  template:
+    metadata:
+      labels:
+        app: product-ghost
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 256Mi

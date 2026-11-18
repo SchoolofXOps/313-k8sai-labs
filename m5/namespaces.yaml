@@ -1,0 +1,31 @@
+# The six namespaces the Module 5 lab uses, one per part (the deep dive creates its own two).
+# Created together at the start, so every later apply lands in a namespace that already exists.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m5-collision
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: research
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: product
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m5-devices
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m5-topology

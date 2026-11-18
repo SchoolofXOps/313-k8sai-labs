@@ -1,0 +1,77 @@
+{
+  "_why": "MOD-08, TRUST-06, TRUST-02. An ADDON LAYER's checks file, beside the synthetic-NIC layer's script triple at labs/clusters/grid-core/addons/dra-nic/checks.json — not a module checks path, so it carries no Truth Contract tag. Every entry asserts OBJECT STATE (STANDARDS.md C26): a DeviceClass and its selector, this driver's ResourceSlices and the attributes on them, a DaemonSet's ready count, the digest a running container resolved, and the committed object set. None asserts a performance number and none a Pod phase. THE DEVICES ARE SYNTHETIC NICs from a second release of the upstream example driver on its net profile: their nic-N names, model string and bandwidth capacity are constants in the driver's source and not readings, so no entry reads any of them and STANDARDS.md C15 Group 3 captions them wherever they reach a page. A synthetic NIC is never called a NIC on hardware. ONLY THIS DRIVER'S SLICES are counted, selected by spec.driver, because addon-dra's slices are on the same nodes — which is also why addon-dra's own checks file does not pass while this layer is applied (it asserts every slice is its driver's). Every kubectl run sets KUBECONFIG itself and names the context, for addon-dra's measured reason. Every entry that reads a layer file uses the dual-layout idiom (d=clusters/... || d=labs/...) from first authoring, so it resolves in a learner's clone of the public labs repository and in the source tree alike (D-08).",
+  "checks": [
+    {
+      "id": "nic-deviceclass-cel-selector-names-the-nic-driver",
+      "describe": "the DeviceClass sim-nic.example.com exists and its CEL selector names the same driver. The chart puts the one driverName value on the driver, the DeviceClass name and the selector together, so a DeviceClass whose selector named another driver would match no synthetic NIC and every claim against it would stay unallocated with no error on the claim",
+      "weight": 1,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get deviceclasses.resource.k8s.io sim-nic.example.com -o jsonpath='{.spec.selectors[0].cel.expression}'",
+      "assert": {
+        "contains": "device.driver == 'sim-nic.example.com'"
+      }
+    },
+    {
+      "id": "nic-slices-one-per-worker-on-the-real-worker",
+      "describe": "this driver's ResourceSlices, counted by spec.driver ONLY because addon-dra's slices sit on the same nodes: at least one, every one carrying the configured four synthetic NICs (kubeletPlugin.numDevices in values.yaml), and one of them on grid-core-worker, the real worker the co-allocation lab's Pod lands on. Printed as one line so zero slices, a wrong per-slice count or a slice on no real worker each fail distinguishably. The devices are SYNTHETIC NICs: their names, model string and bandwidth capacity are constants in the driver's source, which is why no entry here reads any of them",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o json | jq -r --arg d sim-nic.example.com '[.items[] | select(.spec.driver == $d)] as $s | \"nic_slices=\" + ($s | length | tostring) + \" devices_per_slice=\" + ([$s[].spec.devices | length] | unique | map(tostring) | join(\",\")) + \" on_worker=\" + (if ([$s[].spec.nodeName] | index(\"grid-core-worker\")) != null then \"yes\" else \"no\" end)'",
+      "assert": {
+        "matches": "^nic_slices=[1-9][0-9]* devices_per_slice=4 on_worker=yes$"
+      }
+    },
+    {
+      "id": "pcieroot-published-on-every-synthetic-nic",
+      "describe": "every synthetic NIC this driver publishes carries a non-empty resource.kubernetes.io/pcieRoot attribute, printed as with/total with a backreference so zero synthetic NICs cannot pass. values.yaml sets netPublishPCIeRoot: true because the chart default is false, and without the attribute a matchAttribute claim across the two drivers has nothing to match on",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o json | jq -r --arg d sim-nic.example.com --arg k resource.kubernetes.io/pcieRoot '[.items[] | select(.spec.driver == $d) | .spec.devices[]] as $n | \"pcieroot=\" + ([$n[] | .attributes[$k].string | select(. != null and . != \"\")] | length | tostring) + \"/\" + ($n | length | tostring)'",
+      "assert": {
+        "matches": "^pcieroot=([1-9][0-9]*)/\\1$"
+      }
+    },
+    {
+      "id": "every-synthetic-nic-root-is-shared-with-a-synthetic-device",
+      "describe": "THE PROPERTY M6's CO-ALLOCATION RESTS ON, as object state: on every node this driver publishes on, each PCIe root a synthetic NIC carries is also carried by at least one of addon-dra's sim-accelerator.example.com synthetic devices on that same node. Printed with the synthetic-NIC count so an empty set cannot pass. This is what makes a claim with matchAttribute on resource.kubernetes.io/pcieRoot satisfiable; which pair the scheduler then picks is its choice and is not asserted here",
+      "weight": 2,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core get resourceslices -o json | jq -r --arg nic sim-nic.example.com --arg acc sim-accelerator.example.com --arg k resource.kubernetes.io/pcieRoot 'def roots($d; $n): [.items[] | select(.spec.driver == $d and .spec.nodeName == $n) | .spec.devices[].attributes[$k].string | select(. != null)] | unique; . as $all | ([.items[] | select(.spec.driver == $nic) | .spec.devices[]] | length) as $count | ([.items[] | select(.spec.driver == $nic) | .spec.nodeName] | unique | map(. as $n | ($all | roots($nic; $n)) - ($all | roots($acc; $n)) | length) | add // 0) as $u | \"nic_devices=\" + ($count | tostring) + \" unshared_roots=\" + ($u | tostring)'",
+      "assert": {
+        "matches": "^nic_devices=[1-9][0-9]* unshared_roots=0$"
+      }
+    },
+    {
+      "id": "nic-plugin-daemonset-ready",
+      "describe": "the synthetic-NIC kubelet plugin DaemonSet in its own namespace reports numberReady equal to desiredNumberScheduled, and non-zero. Ready is the DaemonSet controller's count of Ready pods, not a Pod phase, and 0 of 0 is an un-applied layer rather than a pass",
+      "weight": 1,
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver-nic get ds dra-example-driver-nic-kubeletplugin -o json | jq -r '\"plugin desired=\" + (.status.desiredNumberScheduled | tostring) + \" ready=\" + (.status.numberReady | tostring)'",
+      "assert": {
+        "matches": "^plugin desired=([1-9][0-9]*) ready=\\1$"
+      }
+    },
+    {
+      "id": "running-nic-plugin-is-on-the-pinned-digest",
+      "describe": "the imageID every Running synthetic-NIC plugin container resolved carries the index digest the committed rendered-pinned.yaml names — read from that file, so this entry and the object set cannot disagree — folded as pinned/total with a backreference so zero running containers cannot pass. The render proves what was asked for; this proves what ran",
+      "weight": 2,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/dra-nic && { [ -d \"$d\" ] || d=labs/$d; } && DIG=$(sed -n 's/^[[:space:]]*image:[[:space:]]*[^@]*@\\(sha256:[0-9a-f]\\{64\\}\\).*$/\\1/p' \"$d/rendered-pinned.yaml\" | sort -u | tr -d '\\n') && KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n dra-example-driver-nic get pod -l app.kubernetes.io/instance=dra-example-driver-nic,app.kubernetes.io/component=kubeletplugin --field-selector status.phase=Running -o json | jq -r --arg dig \"$DIG\" '[.items[].status.containerStatuses[]?.imageID] | \"plugin_containers_pinned=\" + ([.[] | select($dig != \"\" and contains($dig))] | length | tostring) + \"/\" + (length | tostring)'",
+      "assert": {
+        "matches": "^plugin_containers_pinned=([1-9][0-9]*)/\\1$"
+      }
+    },
+    {
+      "id": "committed-rendered-manifest-is-fully-digest-pinned",
+      "describe": "PLAT-01 over this layer's own committed artifact, needing no cluster: every image: line in rendered-pinned.yaml carries an @sha256 digest, counted as references and unpinned so an empty or truncated render cannot satisfy it",
+      "weight": 1,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/dra-nic && { [ -d \"$d\" ] || d=labs/$d; } && sed -n 's/^[[:space:]]*image:[[:space:]]*\\(.*\\)$/\\1/p' \"$d/rendered-pinned.yaml\" | awk 'BEGIN{n=0;bad=0}{n++; if (index($0,\"@sha256:\")==0) bad++}END{printf \"image_refs=%d unpinned=%d\\n\", n, bad}'",
+      "assert": {
+        "matches": "^image_refs=[1-9][0-9]* unpinned=0$"
+      }
+    },
+    {
+      "id": "the-layer-renders-addon-dras-commit-and-image",
+      "describe": "D-50 over the two committed artifacts, needing no cluster: this layer's rendered-pinned.yaml names the same chart commit in its header and the same single image digest as addon-dra's rendered-pinned.yaml beside it. A second release of the driver built from a different commit or image would be a second driver build passed off as the same one, and the co-allocation lab would then be comparing two different drivers. Both commits and both digest sets are compared and counted, so a missing header or an image-less file fails",
+      "weight": 1,
+      "run": "cd \"$(git rev-parse --show-toplevel)\" && d=clusters/grid-core/addons/dra-nic && { [ -d \"$d\" ] || d=labs/$d; } && c() { sed -n 's/^# at git tag [^ ]* (commit \\([0-9a-f]\\{40\\}\\)).*$/\\1/p' \"$1\" | head -1; } && g() { sed -n 's/^[[:space:]]*image:[[:space:]]*[^@]*@\\(sha256:[0-9a-f]\\{64\\}\\).*$/\\1/p' \"$1\" | sort -u | tr '\\n' ' '; } && N=\"$d/rendered-pinned.yaml\" && A=\"$d/../dra/rendered-pinned.yaml\" && cn=$(c \"$N\") && ca=$(c \"$A\") && gn=$(g \"$N\") && ga=$(g \"$A\") && printf 'same_commit=%s same_image=%s digests=%s\\n' \"$( [ -n \"$cn\" ] && [ \"$cn\" = \"$ca\" ] && echo yes || echo no )\" \"$( [ -n \"$gn\" ] && [ \"$gn\" = \"$ga\" ] && echo yes || echo no )\" \"$(printf '%s' \"$gn\" | wc -w | tr -d ' ')\"",
+      "assert": {
+        "matches": "^same_commit=yes same_image=yes digests=1$"
+      }
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+# Part 2: three batch groups from research, 5 cpu each. With research-steady they hold 23 cpu
+# against research's nominal 10, so research borrows 13 from the cohort.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: research-batch-a
+  namespace: research
+  labels:
+    kueue.x-k8s.io/queue-name: research-queue
+    kueue.x-k8s.io/priority-class: tenant-batch
+spec:
+  replicas: 10
+  serviceName: research-batch-a
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: research-batch-a
+  template:
+    metadata:
+      labels:
+        app: research-batch-a
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: research-batch-b
+  namespace: research
+  labels:
+    kueue.x-k8s.io/queue-name: research-queue
+    kueue.x-k8s.io/priority-class: tenant-batch
+spec:
+  replicas: 10
+  serviceName: research-batch-b
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: research-batch-b
+  template:
+    metadata:
+      labels:
+        app: research-batch-b
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: research-batch-c
+  namespace: research
+  labels:
+    kueue.x-k8s.io/queue-name: research-queue
+    kueue.x-k8s.io/priority-class: tenant-batch
+spec:
+  replicas: 10
+  serviceName: research-batch-c
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: research-batch-c
+  template:
+    metadata:
+      labels:
+        app: research-batch-c
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 256Mi
