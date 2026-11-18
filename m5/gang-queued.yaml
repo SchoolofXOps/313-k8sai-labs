@@ -1,0 +1,28 @@
+# Part 1: the identical group, queued. 32 cpu is more than data-cq can ever hold (10 nominal plus a
+# borrowing limit of 8), so it is never admitted, and none of its Pods is ever bound.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: gang-queued
+  namespace: data
+  labels:
+    kueue.x-k8s.io/queue-name: data-queue
+spec:
+  replicas: 8
+  serviceName: gang-queued
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: gang-queued
+  template:
+    metadata:
+      labels:
+        app: gang-queued
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "4"
+              memory: 1Gi

@@ -210,18 +210,20 @@ if [ "${CONFIG_GROUP}" != "config.kueue.x-k8s.io/v1beta2" ]; then
 fi
 if [ "${MAPPING_COUNT:-0}" -lt 1 ]; then
   echo "FAIL: the live Configuration carries no deviceClassMappings entry (probe: ${CONFIG_PROBE})." >&2
-  echo "      Without the mapping, DRA devices are admitted UNCOUNTED: a tenant can" >&2
-  echo "      claim every synthetic device while its ClusterQueue reports its quota" >&2
-  echo "      untouched. Re-apply from the committed values: ${APPLY}" >&2
+  echo "      Without the mapping, a device workload is refused DRAResourcesUnresolved" >&2
+  echo "      (\"DeviceClass ... is not mapped\") instead of charged, so the device" >&2
+  echo "      quota a ClusterQueue prints governs nothing." >&2
+  echo "      Re-apply from the committed values: ${APPLY}" >&2
   exit 1
 fi
 if [ "${MAPS_DEVICE_CLASS}" != "yes" ]; then
   echo "FAIL: no deviceClassMappings entry lists '${DEVICE_CLASS_NAME}' in its deviceClassNames." >&2
   echo "      probe: ${CONFIG_PROBE}" >&2
   echo "      That is the DeviceClass the DRA layer creates (read from ${DRA_VALUES_FILE})." >&2
-  echo "      A mapping naming a DeviceClass that does not exist is accepted silently" >&2
-  echo "      and accounts nothing, which is why the name is resolved and compared" >&2
-  echo "      rather than looked for in the text." >&2
+  echo "      A mapping naming a DeviceClass that does not exist loads silently and" >&2
+  echo "      leaves the real DeviceClass unmapped, which is why the name is resolved" >&2
+  echo "      and compared rather than looked for in the text." >&2
+  echo "      Re-apply from the committed values: ${APPLY}" >&2
   exit 1
 fi
 

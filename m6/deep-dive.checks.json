@@ -1,0 +1,30 @@
+{
+  "truth_contract": "SIMULATED",
+  "_why": "M6 deep-dive end state, read after the deep dive's commit step and before its Teardown. The checkpoint storm runs real NFS writes on a real kind cluster and is recorded, never asserted; the slowdown bundle is synthetic, course-authored evidence that no device, NIC or fabric produced. Record presence and classification content only (TRUST-06, STANDARDS.md C26, D-35): the storm record's declared environment and row counts, and the learner's classification table and root-cause line. No figure is read and no heading is asserted (Phase 4 WR-11). Paths are relative to the learner tree (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m6/deep-dive.checks.json).",
+  "checks": [
+    {
+      "id": "storm-record-has-environment",
+      "describe": "the deep dive's checkpoint-storm record: the newest checkpoint-storm-*/storm-record.md carries the five environment keys each with a value, three concurrent rows and one single row in its | Mode | Writer | Write (MiB/s) | table. No figure is read (TRUST-06, C26). A missing record prints env=missing-record",
+      "run": "f=\"\"; for x in grid-platform/dataplane-storage/measurements/checkpoint-storm-*/storm-record.md; do [ -f \"$x\" ] && f=\"$x\"; done; [ -n \"$f\" ] || { echo \"env=missing-record concurrent=0 single=0\"; exit 0; }; e=0; for k in \"Host:\" \"Container runtime VM:\" \"Kubernetes:\" \"Other containers on the VM:\" \"Harness run id:\"; do v=$(sed -n \"s/^$k[[:space:]]*//p\" \"$f\" | head -1 | tr -d '[:space:]'); [ -n \"$v\" ] && e=$((e+1)); done; c=$(grep -c '^| concurrent | ' \"$f\"); s=$(grep -c '^| single | ' \"$f\"); if [ \"$e\" -eq 5 ]; then ev=declared; else ev=\"missing-$((5-e))\"; fi; echo \"env=$ev concurrent=${c:-0} single=${s:-0}\"",
+      "assert": {
+        "matches": "^env=declared concurrent=3 single=1$"
+      }
+    },
+    {
+      "id": "slowdown-classification-in-order",
+      "describe": "the learner's classification of the synthetic slowdown bundle, grid-platform/dataplane-storage/diagnosis/slowdown-evidence.md: the first word of each row's Signal cell, lower-cased, in table order, is device, dataloader, nccl, interface, rdma, topology. Content is read, never headings (Phase 4 WR-11). The bundle is synthetic and course-authored",
+      "run": "f=grid-platform/dataplane-storage/diagnosis/slowdown-evidence.md; [ -f \"$f\" ] || { echo \"order=missing-file\"; exit 0; }; o=$(awk -F'|' 'h && /^\\|/ && $0 !~ /^\\|[- :|]*$/ {print} /^\\| *Step *\\| *Signal *\\|/ {h=1} h && !/^\\|/ {h=0}' \"$f\" | awk -F'|' '{s=$3; gsub(/^[ \\t]+/, \"\", s); split(s, w, /[ \\t]+/); print tolower(w[1])}' | tr '\\n' ',' | sed 's/,$//'); echo \"order=${o:-none}\"",
+      "assert": {
+        "matches": "^order=device,dataloader,nccl,interface,rdma,topology$"
+      }
+    },
+    {
+      "id": "slowdown-classification-names-each-signal",
+      "describe": "each of the six rows names, in its Evidence file cell, a file present in m6/slowdown-evidence/, and has a non-empty What it shows cell and a non-empty Ruled in or out cell; and a line beginning Root cause: carries text. Classification content only, never a figure from the bundle",
+      "run": "f=grid-platform/dataplane-storage/diagnosis/slowdown-evidence.md; [ -f \"$f\" ] || { echo \"rows=0 files=0 classified=0 root_cause=missing\"; exit 0; }; r=0; n=0; c=0; tmp=$(mktemp \"${TMPDIR:-/tmp}/m6rows.XXXXXX\"); awk -F'|' 'h && /^\\|/ && $0 !~ /^\\|[- :|]*$/ {print} /^\\| *Step *\\| *Signal *\\|/ {h=1} h && !/^\\|/ {h=0}' \"$f\" > \"$tmp\"; while IFS='|' read -r _ step sig ev what ruled _rest; do r=$((r+1)); b=$(printf '%s' \"$ev\" | tr -d '`[:space:]'); b=${b##*/}; [ -n \"$b\" ] && [ -f \"m6/slowdown-evidence/$b\" ] && n=$((n+1)); w=$(printf '%s' \"$what\" | tr -d '[:space:]'); u=$(printf '%s' \"$ruled\" | tr -d '[:space:]'); [ -n \"$w\" ] && [ -n \"$u\" ] && c=$((c+1)); done < \"$tmp\"; rm -f \"$tmp\"; rc=$(sed -n 's/^Root cause:[[:space:]]*//p' \"$f\" | head -1 | tr -d '[:space:]'); if [ -n \"$rc\" ]; then rs=stated; else rs=missing; fi; echo \"rows=$r files=$n classified=$c root_cause=$rs\"",
+      "assert": {
+        "matches": "^rows=6 files=6 classified=6 root_cause=stated$"
+      }
+    }
+  ]
+}

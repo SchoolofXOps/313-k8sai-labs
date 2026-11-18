@@ -1,0 +1,54 @@
+# Part 0: one small queued group, so that one Kueue Workload exists for the unqualified read to miss.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: collision-cq
+spec:
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: sim-fleet
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 1Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "0"
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: collision-queue
+  namespace: m5-collision
+spec:
+  clusterQueue: collision-cq
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: collision-probe
+  namespace: m5-collision
+  labels:
+    kueue.x-k8s.io/queue-name: collision-queue
+spec:
+  replicas: 1
+  serviceName: collision-probe
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: collision-probe
+  template:
+    metadata:
+      labels:
+        app: collision-probe
+    spec:
+      containers:
+        - name: probe
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi

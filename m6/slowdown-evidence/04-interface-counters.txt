@@ -1,0 +1,15 @@
+# SYNTHETIC — course-authored for Module 6. No device, NIC or fabric produced any line in this file.
+#
+# Interface counters on node-a during run B, read twice 60 seconds apart, written by the course in
+# the form `ip -s link` reports them, with the per-second rate worked out underneath. Interface
+# names, link speeds and every figure are invented for this exercise.
+#
+# eth0 — the node's ordinary network, shared with every other Pod on the node, link 25 Gb/s
+#   t=0    RX bytes 918223004112  TX bytes 920113889001  RX dropped 0  TX dropped 0
+#   t=60   RX bytes 1097803226871 TX bytes 1099701430210 RX dropped 1840 TX dropped 0
+#   rate   RX 23.9 Gb/s  TX 23.9 Gb/s  (about 96 of every 100 bits the link can carry)
+#
+# ib0 — the RDMA interface on the fast network, link 200 Gb/s
+#   t=0    RX bytes 41200  TX bytes 39800  RX dropped 0  TX dropped 0
+#   t=60   RX bytes 41264  TX bytes 39862  RX dropped 0  TX dropped 0
+#   rate   RX 0.0 Gb/s  TX 0.0 Gb/s  (link up, carrying nothing but link management)

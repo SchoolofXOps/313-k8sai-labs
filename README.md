@@ -35,9 +35,10 @@ leaves the cluster standing; the base profile's `teardown.sh` deletes the cluste
 | Path | What it adds |
 |---|---|
 | `clusters/grid-core/addons/dra/` | Synthetic devices via the upstream DRA example driver, with the device-health path |
+| `clusters/grid-core/addons/dra-nic/` | Synthetic NICs from a second release of the same example driver, on its `net` profile, for the one-claim device-and-NIC co-allocation. It applies on top of `addons/dra/`. No network card is behind any of them and nothing sends a packet |
 | `clusters/grid-core/addons/nvml-mock/` | Mock devices served by a mock NVML library (Mokka nvml-mock 0.7.0), read by the unmodified vendor device plugin and dcgm-exporter. No accelerator is present and nothing here measures one. Its `teardown.sh` reads the worker's containerd back and reports what it finds |
 | `clusters/grid-core/addons/kueue-kwok/` | Kueue quota and gang admission (`kueue.x-k8s.io/v1beta2`), against a KWOK-simulated fleet joined to the real scheduler |
-| `clusters/grid-core/addons/dataplane/` | The storage and data-path harness |
+| `clusters/grid-core/addons/dataplane/` | The storage and data-path harness: an `s3` path, an `nfs` path, a PVC path and a hostPath path, each timed by the same probe |
 | `clusters/grid-core/addons/serving/` | The inference simulator and the prefix-cache-aware router. **Requires `SIZE=16`** — at `SIZE=8` it reports its fence and applies nothing, and points you at a read-along instead |
 | `clusters/grid-core/addons/ops/` | The operations layer — metrics, dashboards and cost |
 
@@ -61,6 +62,8 @@ repository's root, like everything else here.
 | `m2/` | Module 2's lab: the sizing calculators, the input files they read, and the lab's checks files. They are plain shell arithmetic and need no cluster |
 | `m3/` | Module 3's lab: `kar-list.sh`, which lists the Kubernetes AI Conformance requirements from a pinned commit and reads nothing from your cluster, and the lab's checks files |
 | `m4/` | Module 4's lab: the DeviceClass, ResourceClaim and Pod manifests for the synthetic devices the DRA example driver publishes, the device-health and XID evidence inputs, the Pods that request the vendor device plugin's resource on mock devices, the image pin register `PINS.md`, and the lab's checks files. `m4/optional/` is the optional lab's HAMi install, values and Pods, on mock devices and never part of the core path |
+| `m5/` | Module 5's lab: the tenant namespaces and priority classes, the Kueue queues and flavours (`kueue.x-k8s.io/v1beta2`), the gang, topology, borrowing and quota-incident workloads, the deep dive's gangs, the image pin register `PINS.md`, and the lab's checks files. It runs on the `clusters/grid-core/addons/kueue-kwok/` layer |
+| `m6/` | Module 6's lab: the claim and Pod that ask for a synthetic device and a synthetic NIC under one PCIe root, and the claim no pair can satisfy; the deep dive's checkpoint-storm script and its course-written slowdown evidence files, each marked synthetic in its first line; the image pin register `PINS.md`, and the lab's checks files. It runs on the `dataplane`, `dra` and `dra-nic` layers |
 | `m11/` | Module 11's lab: the sandboxed and plain probe Pods with their probe script, the MCP tool server and its client, the scripted actor and its RBAC, the egress policies, the Sandbox the lab suspends and resumes, and the lab's checks files. It runs on the `clusters/grid-sandbox/` profile |
 | `tools/xray/` | Cluster X-Ray, a live view of your own cluster in the browser: `bash tools/xray/serve.sh`. Its `README.md` says what each lens shows |
 
@@ -84,6 +87,9 @@ The course has a **Truth Contract**, and these assets are written to it:
 - **A mock device is a mock.** The mock NVML layer answers every consumer with a vendor product name,
   a driver version, device UUIDs and memory sizes that describe no hardware on your machine. Where
   that output appears, it is captioned as mock.
+- **A synthetic NIC is not a network card.** The `dra-nic` layer's driver names its devices `nic-N`
+  and reports the model `LATEST-NET-MODEL` and a `100G` bandwidth capacity. All three are constants in
+  the driver's source, not readings, and they are captioned as synthetic wherever they appear.
 - **No measured number appears without the environment it was measured in.**
 - **The simulator is a simulator.** Results from the serving layer are *modelled* or *demonstrated*,
   never *measured* as real model performance.

@@ -1,0 +1,30 @@
+{
+  "_why": "M5 deep-dive end state, read before its Teardown. SIMULATED, as the lab. State-tolerant: each entry reads only the objects the deep dive itself creates in m5-core-gang and m5-claims, so it holds whether or not the lab's objects still exist. Object state only (STANDARDS.md C26): a core scheduling.k8s.io PodGroup's minCount against the count of its members with .spec.nodeName, the PodGroup's own condition, and a Kueue Workload condition reason read through workloads.kueue.x-k8s.io. Every kubectl runs with KUBECONFIG exported and --context kind-grid-core; every matches is anchored. Run from the learner tree root; in src: (cd labs && node ../scripts/run-checks.mjs m5/deep-dive.checks.json).",
+  "truth_contract": "SIMULATED",
+  "checks": [
+    {
+      "id": "podgroup-mincount-met-by-bound-members",
+      "describe": "topic 1: the core scheduling.k8s.io PodGroup research-gang asks for minCount 4, and four of its Deployment's Pods carry .spec.nodeName — the gang was placed whole",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; m=$(kubectl --context kind-grid-core -n m5-core-gang get podgroups.scheduling.k8s.io research-gang -o jsonpath='{.spec.schedulingPolicy.gang.minCount}' 2>/dev/null); b=$(kubectl --context kind-grid-core -n m5-core-gang get pods -l app=research-gang -o json | jq '[.items[] | select(.spec.nodeName != null)] | length'); echo \"mincount=${m:-none} bound=$b\"",
+      "assert": {
+        "matches": "^mincount=4 bound=4$"
+      }
+    },
+    {
+      "id": "unsatisfiable-podgroup-binds-none",
+      "describe": "topic 2: oversized-gang's ten Pods exist, none carries .spec.nodeName, and its core scheduling.k8s.io PodGroup's scheduled condition is False — a gang that cannot be placed whole is not placed in part",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; p=$(kubectl --context kind-grid-core -n m5-core-gang get pods -l app=oversized-gang -o json | jq -r '\"pods=\" + (.items | length | tostring) + \" bound=\" + ([.items[] | select(.spec.nodeName != null)] | length | tostring)'); s=$(kubectl --context kind-grid-core -n m5-core-gang get podgroups.scheduling.k8s.io oversized-gang -o json 2>/dev/null | jq -r '[.status.conditions[]? | select(.type | test(\"Scheduled\")) | .status] | first // \"none\"'); echo \"$p scheduled=${s:-none}\"",
+      "assert": {
+        "matches": "^pods=10 bound=0 scheduled=False$"
+      }
+    },
+    {
+      "id": "precreated-claim-refused-with-reason",
+      "describe": "topic 4: precreated-claim's Kueue Workload in m5-claims, whose Pod names a claim created ahead of time through resourceClaimName, has QuotaReserved reason Misconfigured — refused at this release, a documented limitation and not a way around quota",
+      "run": "KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\" kubectl --context kind-grid-core -n m5-claims get workloads.kueue.x-k8s.io -o json | jq -r '[.items[] | select(any(.metadata.ownerReferences[]?; .kind == \"Job\" and .name == \"precreated-claim\"))] | first | if . == null then \"qr=absent\" else \"qr=\" + ([.status.conditions[]? | select(.type == \"QuotaReserved\") | .reason] | first // \"none\") end'",
+      "assert": {
+        "matches": "^qr=Misconfigured$"
+      }
+    }
+  ]
+}

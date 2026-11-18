@@ -39,13 +39,19 @@
 #
 #   2. NO ABSOLUTE THROUGHPUT FIGURE PRESENTED AS DISK PERFORMANCE. The guest
 #      cannot evict the host's page cache, so an absolute number measures the
-#      cache as much as the disk. What IS reproducible: the tier split — both
-#      local-filesystem paths above both network-protocol paths, 16 of 16
-#      measurements — and the cold first write on the network-filesystem path,
-#      3.5 MiB/s in both independent runs and 69-125x slower than the same
-#      path's second write, while the two local paths show no such penalty.
-#      Within-tier ordering is not reproducible on this hardware and must not be
-#      claimed.
+#      cache as much as the disk. Neither property a lesson might rest on is a
+#      fixed number either. The tier split (both local-filesystem paths above
+#      both network-protocol paths) held in some repetitions of the course's
+#      M6 lab runs and broke in others, every break through the s3 path's
+#      server-side cache, so it is read from each run's own table and never
+#      assumed. The network-filesystem path's slow first write is a WAIT, not a
+#      write speed: its server runs with Grace_Period = 90 and holds back every
+#      new open for 90 s after each start or restart, so a first write that
+#      lands in that window waits for it to close, whatever its size; the two
+#      local paths have no such window. Within-tier ordering is not
+#      reproducible on this hardware and must not be claimed. Both are recorded
+#      in the course's planning/lab-tests/m6.md (not in the learner
+#      repository): § Lab fold and § Cold first write: cause.
 # ------------------------------------------------------------------------------
 #
 # Usage:
@@ -278,5 +284,5 @@ echo "  no throughput figure is asserted anywhere in this layer — that is a me
 echo "  bind mount: ${MOUNT_SOURCE} -> ${HOSTPATH_NODE} (${FSTYPE_MOUNT}, against '${FSTYPE_ROOT}' at the node root)"
 echo "  protocol:   ${S3_PROBE}"
 echo "  SCOPE LIMIT 1: no claim distinguishes the provisioned-volume path from the bind-mount path here — measured 3.3% on write, 10.6% on read, inside a 57.2% / 23.1% spread"
-echo "  SCOPE LIMIT 2: no absolute throughput figure is disk performance — claimable: the tier split (16 of 16) and the network path's 3.5 MiB/s cold first write, 69-125x slower than its second"
+echo "  SCOPE LIMIT 2: no absolute throughput figure is disk performance — the tier split is read from each run's own table, never assumed (it broke in some repetitions, through the s3 path's cache), and the network path's slow first write is a wait of up to 90 s after every NFS server start or restart (its grace period), not a write speed"
 echo "  lab budget: ${BUDGET_MB} MiB (lab.sizes.${SIZE}.budget_mb, exported as BUDGET_MB)"

@@ -1,0 +1,30 @@
+# Part 4, the negative control: identical to the three above. Every block now has room for two
+# of these Pods and the group needs four in one block, so it is refused.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-gang-refused
+  namespace: m5-topology
+  labels:
+    kueue.x-k8s.io/queue-name: topology-queue
+spec:
+  replicas: 4
+  serviceName: block-gang-refused
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: block-gang-refused
+  template:
+    metadata:
+      labels:
+        app: block-gang-refused
+      annotations:
+        kueue.x-k8s.io/podset-required-topology: cloud.provider.com/topology-block
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 12Gi

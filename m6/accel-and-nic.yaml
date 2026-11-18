@@ -1,0 +1,33 @@
+# Module 6 lab — ONE claim template asking for a synthetic device AND a synthetic NIC that sit under
+# one PCIe root.
+#
+# Two requests, two drivers, one constraint. `sim-accelerator.example.com` is the synthetic-device
+# class addon-dra installs (Module 4); `sim-nic.example.com` is the synthetic-NIC class addon-dra-nic
+# installs, a second release of the same upstream example driver on its `net` profile. Both drivers
+# publish the standard attribute `resource.kubernetes.io/pcieRoot` from the same round-robin helper,
+# so a pair under one root exists, and the scheduler's DRA plugin must find it or allocate nothing.
+#
+# Nothing here is hardware. There is no accelerator and no network card behind either class, and the
+# constraint models "device and NIC under one PCIe root" at the object level only: NUMA alignment,
+# device injection and RDMA performance are hardware- and driver-dependent.
+#
+# No metadata.namespace, on purpose: the lab applies it with -n m6-network, and the same file is the
+# copy committed to grid-platform/dataplane-storage/network/, where a tenant applies it into its own
+# namespace. The shape follows DRANet's own example (examples/demo_nvidia_dranet/resourceclaims.yaml
+# at kubernetes-sigs/dranet v1.5.0), which this course cites and does not run.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: accel-and-nic-one-root
+spec:
+  spec:
+    devices:
+      requests:
+      - name: accelerator
+        exactly:
+          deviceClassName: sim-accelerator.example.com
+      - name: nic
+        exactly:
+          deviceClassName: sim-nic.example.com
+      constraints:
+      - matchAttribute: "resource.kubernetes.io/pcieRoot"

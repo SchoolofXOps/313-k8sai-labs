@@ -1,0 +1,89 @@
+# Part 4: three groups of four, each REQUIRED to fit inside one topology block. Each Pod asks for
+# 12Gi, so a 32Gi simulated node takes two and a block of three nodes takes six: memory decides
+# the outcome here, not the cpu that parts 1 and 2 left behind.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-gang-a
+  namespace: m5-topology
+  labels:
+    kueue.x-k8s.io/queue-name: topology-queue
+spec:
+  replicas: 4
+  serviceName: block-gang-a
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: block-gang-a
+  template:
+    metadata:
+      labels:
+        app: block-gang-a
+      annotations:
+        kueue.x-k8s.io/podset-required-topology: cloud.provider.com/topology-block
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 12Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-gang-b
+  namespace: m5-topology
+  labels:
+    kueue.x-k8s.io/queue-name: topology-queue
+spec:
+  replicas: 4
+  serviceName: block-gang-b
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: block-gang-b
+  template:
+    metadata:
+      labels:
+        app: block-gang-b
+      annotations:
+        kueue.x-k8s.io/podset-required-topology: cloud.provider.com/topology-block
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 12Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-gang-c
+  namespace: m5-topology
+  labels:
+    kueue.x-k8s.io/queue-name: topology-queue
+spec:
+  replicas: 4
+  serviceName: block-gang-c
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: block-gang-c
+  template:
+    metadata:
+      labels:
+        app: block-gang-c
+      annotations:
+        kueue.x-k8s.io/podset-required-topology: cloud.provider.com/topology-block
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 12Gi

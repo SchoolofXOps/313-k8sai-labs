@@ -1,0 +1,43 @@
+# Deep dive, topic 2: a gang that cannot be placed. Ten members of 4 cpu, and the simulated fleet
+# has room for far fewer once research-gang holds four nodes, so the scheduler binds none of them.
+apiVersion: scheduling.k8s.io/v1beta1
+kind: PodGroup
+metadata:
+  name: oversized-gang
+  namespace: m5-core-gang
+spec:
+  schedulingPolicy:
+    gang:
+      minCount: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oversized-gang
+  namespace: m5-core-gang
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: oversized-gang
+  template:
+    metadata:
+      labels:
+        app: oversized-gang
+    spec:
+      schedulingGroup:
+        podGroupName: oversized-gang
+      nodeSelector:
+        type: kwok
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "4"
+              memory: 1Gi

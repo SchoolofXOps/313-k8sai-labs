@@ -1,0 +1,55 @@
+# Deep dive, topic 3: the same ten-member shape through Kueue. compare-cq has quota for all of it,
+# so Kueue admits it whole; the fleet then places only what fits.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: compare-cq
+spec:
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: sim-fleet
+          resources:
+            - name: cpu
+              nominalQuota: "40"
+            - name: memory
+              nominalQuota: 64Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "0"
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: compare-queue
+  namespace: m5-core-gang
+spec:
+  clusterQueue: compare-cq
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kueue-same-gang
+  namespace: m5-core-gang
+  labels:
+    kueue.x-k8s.io/queue-name: compare-queue
+spec:
+  replicas: 10
+  serviceName: kueue-same-gang
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: kueue-same-gang
+  template:
+    metadata:
+      labels:
+        app: kueue-same-gang
+    spec:
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "4"
+              memory: 1Gi

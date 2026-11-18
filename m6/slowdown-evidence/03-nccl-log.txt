@@ -1,0 +1,26 @@
+# SYNTHETIC — course-authored for Module 6. No device, NIC or fabric produced any line in this file.
+#
+# Start-up lines from the collective-communication library, run B (eight accelerators on two
+# nodes), rank 0 and rank 4, written by the course in the format NCCL logs at NCCL_DEBUG=INFO.
+# Addresses, process ids and the library version are invented for this exercise.
+#
+node-a:4121:4121 [0] NCCL INFO Bootstrap : Using eth0:10.42.0.11<0>
+node-a:4121:4121 [0] NCCL INFO NCCL version 2.27.3+cuda (course-invented version string)
+node-a:4121:4188 [0] NCCL INFO NET/IB : No device found.
+node-a:4121:4188 [0] NCCL INFO NET/Socket : Using [0]eth0:10.42.0.11<0>
+node-a:4121:4188 [0] NCCL INFO Using network Socket
+node-a:4121:4188 [0] NCCL INFO comm 0x7f3a rank 0 nranks 8 cudaDev 0 nvmlDev 0 busId 1b000 - Init START
+node-a:4121:4188 [0] NCCL INFO Channel 00/02 : 0 1 2 3 4 5 6 7
+node-a:4121:4188 [0] NCCL INFO Channel 00/0 : 3[3] -> 4[0] [send] via NET/Socket/0
+node-a:4121:4188 [0] NCCL INFO Channel 01/0 : 3[3] -> 4[0] [send] via NET/Socket/0
+node-a:4121:4188 [0] NCCL INFO Connected all rings
+node-b:5530:5590 [0] NCCL INFO Bootstrap : Using eth0:10.42.0.12<0>
+node-b:5530:5590 [0] NCCL INFO NET/IB : No device found.
+node-b:5530:5590 [0] NCCL INFO NET/Socket : Using [0]eth0:10.42.0.12<0>
+node-b:5530:5590 [0] NCCL INFO Using network Socket
+node-b:5530:5590 [0] NCCL INFO Channel 00/0 : 7[3] -> 0[0] [send] via NET/Socket/0
+#
+# For comparison, run A (four accelerators on node-a only) logs no NET line for its rings:
+node-a:3001:3060 [0] NCCL INFO Channel 00/02 : 0 1 2 3
+node-a:3001:3060 [0] NCCL INFO Channel 00/0 : 0[0] -> 1[1] via P2P/direct pointer
+node-a:3001:3060 [0] NCCL INFO Connected all rings

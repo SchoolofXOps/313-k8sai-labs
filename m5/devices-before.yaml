@@ -1,0 +1,28 @@
+# Part 3, the before state: a suspended Job whose Pod claims one synthetic device from the
+# template. A Job, not a StatefulSet: it creates no Pod until it is admitted, so "no Pod" is exact.
+# It runs on the real worker, where kwok's Job-completion stage does not reach.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: devices-before
+  namespace: m5-devices
+  labels:
+    kueue.x-k8s.io/queue-name: devices-queue
+spec:
+  suspend: true
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            claims:
+              - name: accel
+      resourceClaims:
+        - name: accel
+          resourceClaimTemplateName: one-sim-accelerator

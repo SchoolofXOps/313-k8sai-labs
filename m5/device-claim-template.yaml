@@ -1,0 +1,16 @@
+# Part 3: one synthetic device per Pod, by class name and nothing else. No CEL selector, so the only
+# thing that can decide this experiment is Kueue's accounting. The class name is the one the
+# addon-dra layer's values.yaml sets and Kueue's deviceClassMappings maps to the quota resource
+# example.com/sim-accelerator.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: one-sim-accelerator
+  namespace: m5-devices
+spec:
+  spec:
+    devices:
+      requests:
+        - name: accel
+          exactly:
+            deviceClassName: sim-accelerator.example.com

@@ -53,10 +53,12 @@
 #     not a separate data path, and the measured gap was 3.3% on write and 10.6%
 #     on read, inside the spread;
 #   * no absolute throughput figure presented as disk performance — the guest
-#     cannot evict the host's page cache. What IS reproducible is the tier split
-#     (local filesystem above network protocol, 16 of 16 measurements) and the
-#     cold first write on the network path, 3.5 MiB/s in both runs and 69-125x
-#     slower than steady state.
+#     cannot evict the host's page cache. The tier split (local filesystem above
+#     network protocol) is read from each run's own table, never assumed: it
+#     broke in some repetitions of the course's M6 lab runs, through the s3
+#     path's cache. The network path's slow first write is a wait of up to 90 s
+#     after every NFS server start or restart (its grace period,
+#     Grace_Period = 90), not a write speed.
 #
 # Usage:
 #   bash create.sh                 # apply the layer onto a running grid-core

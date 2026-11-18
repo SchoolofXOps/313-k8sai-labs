@@ -1,0 +1,82 @@
+{
+  "truth_contract": "SIMULATED",
+  "_why": "M6 lab end state, read after \"Commit the data-plane layer\" and before \"Teardown\". SIMULATED is the one tag no part of the lab exceeds (Phase 6 CONTEXT D-36): the storage half runs real protocols on a real kind cluster and is scope-limited by three fences, and the device and the NIC are synthetic, published by two releases of the upstream example driver. Object state and record presence only (TRUST-06, STANDARDS.md C26, D-06, D-34): claim allocation results, a ResourceSlice attribute, an event by reason, a namespace's existence, and the presence of the learner's measurement record with its declared-environment block. No number in any record is read, and no Pod phase is read. Every kubectl runs with KUBECONFIG exported and --context kind-grid-core; every matches is anchored and in JavaScript regex dialect. Measurement directories named checkpoint-storm-* belong to the deep dive and are skipped here. Paths are relative to the learner tree (the labs repo root); in src run it from labs/ with: (cd labs && node ../scripts/run-checks.mjs m6/checks.json).",
+  "checks": [
+    {
+      "id": "four-path-record-has-environment-and-four-rows",
+      "describe": "the lab's measurement record: in the newest measurement directory that is not a checkpoint-storm-* one, table-<RUN_ID>.md carries rows for all four paths (s3, nfs, pvc, hostpath) with none of them unmeasured, conclusion.md carries the five environment keys each with a value, and its Tier split: line names both the local and the network paths. No figure in either file is read (TRUST-06, C26, D-34). A missing record prints env=missing-record",
+      "weight": 2,
+      "run": "d=\"\"; for x in grid-platform/dataplane-storage/measurements/*/; do case \"$x\" in */checkpoint-storm-*) continue ;; esac; [ -f \"${x}conclusion.md\" ] && d=\"$x\"; done; [ -n \"$d\" ] || { echo \"paths=0 env=missing-record conclusion=missing\"; exit 0; }; t=\"\"; for y in \"$d\"table-*.md; do [ -f \"$y\" ] && t=\"$y\"; done; p=0; if [ -n \"$t\" ]; then for q in s3 nfs pvc hostpath; do r=$(grep -c \"^| $q | [0-9]\" \"$t\"); u=$(grep \"^| $q |\" \"$t\" | grep -c unmeasured); [ \"${r:-0}\" -ge 1 ] && [ \"${u:-0}\" -eq 0 ] && p=$((p+1)); done; fi; e=0; for k in \"Host:\" \"Container runtime VM:\" \"Kubernetes:\" \"Other containers on the VM:\" \"Harness run id:\"; do v=$(sed -n \"s/^$k[[:space:]]*//p\" \"${d}conclusion.md\" | head -1 | tr -d '[:space:]'); [ -n \"$v\" ] && e=$((e+1)); done; ts=$(sed -n 's/^Tier split:[[:space:]]*//p' \"${d}conclusion.md\" | head -1 | tr '[:upper:]' '[:lower:]'); c=missing; case \"$ts\" in *local*) case \"$ts\" in *network*) c=tier-split ;; esac ;; esac; if [ \"$e\" -eq 5 ]; then ev=declared; else ev=\"missing-$((5-e))\"; fi; echo \"paths=$p env=$ev conclusion=$c\"",
+      "assert": {
+        "matches": "^paths=4 env=declared conclusion=tier-split$"
+      }
+    },
+    {
+      "id": "harness-config-beside-the-figure",
+      "describe": "the harness configuration sits beside the figures it explains: the newest lab measurement directory holds harness-config.md, its Run id: value R is read, and table-R.md and results-R.jsonl are in the same directory (D-34). The run id is the harness's own; the directory name is the page's MEASURE_ID",
+      "run": "d=\"\"; for x in grid-platform/dataplane-storage/measurements/*/; do case \"$x\" in */checkpoint-storm-*) continue ;; esac; [ -f \"${x}harness-config.md\" ] && d=\"$x\"; done; [ -n \"$d\" ] || { echo \"config=missing run_id=none\"; exit 0; }; r=$(sed -n 's/^Run id: `\\([^`]*\\)`.*$/\\1/p' \"${d}harness-config.md\" | head -1); [ -n \"$r\" ] || { echo \"config=beside run_id=unreadable\"; exit 0; }; if [ -f \"${d}table-$r.md\" ] && [ -f \"${d}results-$r.jsonl\" ]; then echo \"config=beside run_id=match\"; else echo \"config=beside run_id=mismatch\"; fi",
+      "assert": {
+        "matches": "^config=beside run_id=match$"
+      }
+    },
+    {
+      "id": "measurement-not-written-into-the-harness-tree",
+      "describe": "both redirections held: git reports no change under storage/four-path (the committed harness-config.md is untouched) and no table-* or results-* file was written there. Without CONFIG_OUT and RESULTS_DIR the harness rewrites its own committed config (research Pitfall 11, threat T-06-37)",
+      "run": "[ -f storage/four-path/run.sh ] || { echo \"harness_tree=absent\"; exit 0; }; s=$(git status --porcelain -- storage/four-path 2>&1); n=0; for f in storage/four-path/table-* storage/four-path/results-*; do [ -e \"$f\" ] && n=$((n+1)); done; if [ -z \"$s\" ] && [ \"$n\" -eq 0 ]; then echo \"harness_tree=clean\"; else echo \"harness_tree=dirty\"; fi",
+      "assert": {
+        "matches": "^harness_tree=clean$"
+      }
+    },
+    {
+      "id": "storage-clients-removed-before-server",
+      "describe": "the storage layer came down clients first: namespace spike-02 is absent, not Terminating. A namespace still Terminating is the hard-mount deadlock the teardown order exists to prevent (a measured Phase 1 finding). An unreadable namespace list prints unread, never absent",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; j=$(kubectl --context kind-grid-core get namespaces -o json 2>/dev/null); [ -n \"$j\" ] || { echo \"storage_namespace=unread\"; exit 0; }; s=$(printf '%s' \"$j\" | jq -r 'if (.items | length) == 0 then \"unread\" else ([.items[] | select(.metadata.name == \"spike-02\") | .status.phase] | if length == 0 then \"absent\" else \"present-\" + .[0] end) end'); echo \"storage_namespace=${s:-unread}\"",
+      "assert": {
+        "matches": "^storage_namespace=absent$"
+      }
+    },
+    {
+      "id": "nic-slices-carry-pcieroot",
+      "describe": "the synthetic-NIC driver's ResourceSlices, selected by spec.driver because the device driver's slices sit on the same node: four synthetic NICs, each publishing resource.kubernetes.io/pcieRoot. The NICs are synthetic, published by a second release of the upstream example driver",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; kubectl --context kind-grid-core get resourceslices -o json | jq -r --arg d sim-nic.example.com --arg k resource.kubernetes.io/pcieRoot '[.items[] | select(.spec.driver == $d) | .spec.devices[]] as $n | \"driver=\" + (if ($n | length) > 0 then $d else \"none\" end) + \" devices=\" + ($n | length | tostring) + \" pcieroot=\" + ([$n[] | .attributes[$k].string | select(. != null and . != \"\")] | length | tostring)'",
+      "assert": {
+        "matches": "^driver=sim-nic\\.example\\.com devices=4 pcieroot=4$"
+      }
+    },
+    {
+      "id": "one-claim-two-drivers",
+      "describe": "the claim named in Pod accel-and-nic's status.resourceClaimStatuses, in m6-network, holds two allocation results naming the two drivers: the synthetic device's and the synthetic NIC's. One claim, both allocated (SC4, D-27)",
+      "weight": 2,
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; c=$(kubectl --context kind-grid-core -n m6-network get pod accel-and-nic -o jsonpath='{.status.resourceClaimStatuses[0].resourceClaimName}' 2>/dev/null); [ -n \"$c\" ] || { echo \"results=0 drivers=none\"; exit 0; }; o=$(kubectl --context kind-grid-core -n m6-network get resourceclaim \"$c\" -o json 2>/dev/null | jq -r '(.status.allocation.devices.results // []) as $r | \"results=\" + ($r | length | tostring) + \" drivers=\" + ([$r[].driver] | sort | join(\",\"))'); echo \"${o:-results=0 drivers=unread}\"",
+      "assert": {
+        "matches": "^results=2 drivers=sim-accelerator\\.example\\.com,sim-nic\\.example\\.com$"
+      }
+    },
+    {
+      "id": "claim-devices-share-one-pcieroot",
+      "describe": "each of that claim's results (driver, pool, device) joined to its ResourceSlice's resource.kubernetes.io/pcieRoot: both results join, and the two roots are one root. A result that does not join prints unjoined, never a pass",
+      "weight": 2,
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; c=$(kubectl --context kind-grid-core -n m6-network get pod accel-and-nic -o jsonpath='{.status.resourceClaimStatuses[0].resourceClaimName}' 2>/dev/null); [ -n \"$c\" ] || { echo \"roots=0 root=noclaim\"; exit 0; }; s=$(kubectl --context kind-grid-core get resourceslices -o json 2>/dev/null); [ -n \"$s\" ] || { echo \"roots=0 root=unread\"; exit 0; }; o=$(kubectl --context kind-grid-core -n m6-network get resourceclaim \"$c\" -o json 2>/dev/null | jq -r --argjson s \"$s\" --arg k resource.kubernetes.io/pcieRoot '[(.status.allocation.devices.results // [])[] as $r | $s.items[] | select(.spec.driver == $r.driver and .spec.pool.name == $r.pool) | .spec.devices[] | select(.name == $r.device) | .attributes[$k].string // empty] as $roots | if ($roots | length) < 2 then \"roots=0 root=unjoined\" else ($roots | unique) as $u | \"roots=\" + ($u | length | tostring) + \" root=\" + ($u | join(\",\")) end'); echo \"${o:-roots=0 root=unread}\"",
+      "assert": {
+        "matches": "^roots=1 root=pci0000:(00|80)$"
+      }
+    },
+    {
+      "id": "mismatched-roots-leave-claim-unallocated",
+      "describe": "the deliberate failure: Pod split-roots's claim, from accel-and-nic-split-roots, has no .status.allocation, and the Pod carries a FailedScheduling event whose message says the scheduler cannot allocate all claims. Read from the claim and the event, never from the Pod's phase",
+      "run": "export KUBECONFIG=\"${KUBECONFIG:-/tmp/grid-core.kubeconfig}\"; c=$(kubectl --context kind-grid-core -n m6-network get pod split-roots -o jsonpath='{.status.resourceClaimStatuses[0].resourceClaimName}' 2>/dev/null); [ -n \"$c\" ] || { echo \"allocation=noclaim event=none\"; exit 0; }; a=$(kubectl --context kind-grid-core -n m6-network get resourceclaim \"$c\" -o json 2>/dev/null | jq -r 'if .status.allocation == null then \"none\" else \"present\" end'); n=$(kubectl --context kind-grid-core -n m6-network get events --field-selector involvedObject.name=split-roots,reason=FailedScheduling -o json 2>/dev/null | jq '[.items[] | select(.message | test(\"cannot allocate all claims\"))] | length'); if [ \"${n:-0}\" -ge 1 ]; then e=FailedScheduling; else e=none; fi; echo \"allocation=${a:-unread} event=$e\"",
+      "assert": {
+        "matches": "^allocation=none event=FailedScheduling$"
+      }
+    },
+    {
+      "id": "dataplane-layer-committed",
+      "describe": "the commit step: git tracks a lab measurement directory holding harness-config.md, table-*.md, results-*.jsonl and conclusion.md; storage/paths.md; the three network/ files (the claim template, the NIC driver's values copy, the class reference); and the six wrappers under addon-dataplane and addon-dra-nic, each of which, comment lines stripped, execs the single-source layer script of the same name",
+      "weight": 2,
+      "run": "m=no; for d in $(git ls-files grid-platform/dataplane-storage/measurements | sed -n 's#^\\(grid-platform/dataplane-storage/measurements/[^/]*\\)/.*#\\1#p' | sort -u); do case \"$d\" in */checkpoint-storm-*) continue ;; esac; f=$(git ls-files \"$d\"); h=0; for pat in '/harness-config\\.md$' '/table-[^/]*\\.md$' '/results-[^/]*\\.jsonl$' '/conclusion\\.md$'; do c=$(printf '%s\\n' \"$f\" | grep -c \"$pat\"); [ \"${c:-0}\" -ge 1 ] && h=$((h+1)); done; [ \"$h\" -eq 4 ] && m=yes; done; s=no; [ -n \"$(git ls-files grid-platform/dataplane-storage/storage/paths.md)\" ] && s=yes; n=0; for x in accel-and-nic-one-root.yaml sim-nic-values.yaml sim-nic-class.md; do [ -n \"$(git ls-files \"grid-platform/dataplane-storage/network/$x\")\" ] && n=$((n+1)); done; if [ \"$n\" -eq 3 ]; then nw=yes; else nw=no; fi; w=0; for pair in addon-dataplane:dataplane addon-dra-nic:dra-nic; do p=${pair%%:*}; l=${pair#*:}; for v in create verify teardown; do f=\"grid-platform/clusters/$p/$v.sh\"; [ -n \"$(git ls-files \"$f\")\" ] || continue; c=$(grep -v '^[[:space:]]*#' \"$f\" 2>/dev/null | grep -F \"/clusters/grid-core/addons/$l/$v.sh\" | grep -c '^exec '); [ \"$c\" = \"1\" ] && w=$((w+1)); done; done; echo \"measurements=$m storage=$s network=$nw wrappers=$w\"",
+      "assert": {
+        "matches": "^measurements=yes storage=yes network=yes wrappers=6$"
+      }
+    }
+  ]
+}

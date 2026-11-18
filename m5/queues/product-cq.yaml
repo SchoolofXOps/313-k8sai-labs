@@ -1,0 +1,29 @@
+# product: as first written, with no preemption policy and no lending limit. Part 2 starves it,
+# then m5/starvation-fix.yaml re-applies this ClusterQueue with both.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: product-cq
+spec:
+  cohortName: northwind-tenants
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: sim-fleet
+          resources:
+            - name: cpu
+              nominalQuota: "10"
+            - name: memory
+              nominalQuota: 64Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "0"
+        - name: real-worker
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 2Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "1"

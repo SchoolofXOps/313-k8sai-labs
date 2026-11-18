@@ -1,0 +1,36 @@
+# Part 2's fix: product-cq re-applied in full. Two changes against m5/queues/product-cq.yaml:
+#   preemption   — product may now take back quota that a lower-priority group in the cohort
+#                  borrowed from it, and may preempt lower priority inside its own queue;
+#   lendingLimit — product lends at most 2 of its 10 simulated-fleet cpu, so the other tenants can
+#                  never borrow it down to nothing again.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: product-cq
+spec:
+  cohortName: northwind-tenants
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  preemption:
+    reclaimWithinCohort: LowerPriority
+    withinClusterQueue: LowerPriority
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: sim-fleet
+          resources:
+            - name: cpu
+              nominalQuota: "10"
+              lendingLimit: "2"
+            - name: memory
+              nominalQuota: 64Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "0"
+        - name: real-worker
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 2Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "1"

@@ -1,0 +1,49 @@
+# Deep dive, topic 1: a core gang. A scheduling.k8s.io/v1beta1 PodGroup that asks for at least four
+# members, and a Deployment whose Pods name it. A Deployment and not a Job, because kwok completes
+# Job-owned Pods on the simulated fleet. No queue label: Kueue decides nothing here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m5-core-gang
+---
+apiVersion: scheduling.k8s.io/v1beta1
+kind: PodGroup
+metadata:
+  name: research-gang
+  namespace: m5-core-gang
+spec:
+  schedulingPolicy:
+    gang:
+      minCount: 4
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: research-gang
+  namespace: m5-core-gang
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: research-gang
+  template:
+    metadata:
+      labels:
+        app: research-gang
+    spec:
+      schedulingGroup:
+        podGroupName: research-gang
+      nodeSelector:
+        type: kwok
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: "4"
+              memory: 1Gi

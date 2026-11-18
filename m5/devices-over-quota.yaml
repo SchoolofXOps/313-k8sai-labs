@@ -1,0 +1,27 @@
+# Part 3, the after state and the deliberate failure: the same Job under another name. It stays
+# until Teardown, as the live end-state object for the after state.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: devices-over-quota
+  namespace: m5-devices
+  labels:
+    kueue.x-k8s.io/queue-name: devices-queue
+spec:
+  suspend: true
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            claims:
+              - name: accel
+      resourceClaims:
+        - name: accel
+          resourceClaimTemplateName: one-sim-accelerator

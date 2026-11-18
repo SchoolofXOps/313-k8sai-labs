@@ -1,0 +1,10 @@
+# Part 4: the fleet's topology, as the addon-kueue-kwok layer labels it — three blocks, each of three
+# racks, one simulated node per rack. Levels run from the widest domain to the narrowest.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: Topology
+metadata:
+  name: northwind-topology
+spec:
+  levels:
+    - nodeLabel: cloud.provider.com/topology-block
+    - nodeLabel: cloud.provider.com/topology-rack

@@ -1,0 +1,29 @@
+# research: nominal 10 cpu on the simulated fleet, no borrowing limit, so it can take whatever the
+# cohort has idle. Part 2 is where that becomes starvation for product.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: research-cq
+spec:
+  cohortName: northwind-tenants
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: sim-fleet
+          resources:
+            - name: cpu
+              nominalQuota: "10"
+            - name: memory
+              nominalQuota: 64Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "0"
+        - name: real-worker
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 2Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "1"

@@ -7,7 +7,7 @@
 # removes the layer and LEAVES THAT CLUSTER RUNNING.
 #
 # Two installs in one layer, in this order:
-#   1. Kueue v0.20.0 from the OCI chart, rendered from a digest-VERIFIED local
+#   1. Kueue v0.20.6 from the OCI chart, rendered from a digest-VERIFIED local
 #      archive with the committed kueue-values.yaml, its controller image
 #      digest-pinned into the rendered output;
 #   2. the kwok ATTACH-MODE simulated fleet, driven through
@@ -183,8 +183,10 @@ DEPLOYMENT="${RELEASE}-controller-manager"
 # Resolved in SPIKE-00, re-verified at install time in SPIKE-04, and re-verified
 # again by this script on every run.
 CHART_REF="${CHART_REF:-oci://registry.k8s.io/kueue/charts/kueue}"
-CHART_VERSION="${CHART_VERSION:-0.20.0}"
-CHART_DIGEST="${CHART_DIGEST:-sha256:61857945f1109da052dcc01baf79ea912a6c2a5ffeb087f3dfe270c9ea198c9c}"
+# Moved from 0.20.0 to 0.20.6 by plan 06-03 (D-03, D-46): four v0.20.x fixes touch paths
+# Module 5 teaches. Both chart digests are recorded in planning/lab-tests/06-kueue-v0206.md.
+CHART_VERSION="${CHART_VERSION:-0.20.6}"
+CHART_DIGEST="${CHART_DIGEST:-sha256:4be51d90efc40114c232ddda68f660639640586545e86119cdb3c21621449110}"
 
 # The controller image's manifest-list (INDEX) digest. The index, not a per-arch
 # digest, so one pin serves linux/arm64 (this host) and linux/amd64 (plan 03-08's
@@ -194,9 +196,12 @@ CHART_DIGEST="${CHART_DIGEST:-sha256:61857945f1109da052dcc01baf79ea912a6c2a5ffeb
 # image TAG (`registry.k8s.io/kueue/kueue:v0.20.0`), so nothing in this project
 # had resolved it before. Resolved with
 #   docker buildx imagetools inspect registry.k8s.io/kueue/kueue:v0.20.0
-# and recorded in planning/lab-tests/03-addon-kueue-kwok.md.
+# and recorded in planning/lab-tests/03-addon-kueue-kwok.md. Re-resolved at the
+# v0.20.6 pin by plan 06-03 with
+#   docker buildx imagetools inspect registry.k8s.io/kueue/kueue:v0.20.6
+# and recorded in planning/lab-tests/06-kueue-v0206.md.
 KUEUE_IMAGE_REPO="registry.k8s.io/kueue/kueue"
-KUEUE_IMAGE_DIGEST="${KUEUE_IMAGE_DIGEST:-sha256:7c57f630b2987058cc543710aa4829cfd8119b7f7c23431cbc242b82cf4bce57}"
+KUEUE_IMAGE_DIGEST="${KUEUE_IMAGE_DIGEST:-sha256:20465f0e56a4eed90ec07fa7838866a90f7b6890c0adc84be86aaee307a6744a}"
 KUEUE_IMAGE="${KUEUE_IMAGE_REPO}@${KUEUE_IMAGE_DIGEST}"
 
 VALUES_FILE="${ADDON_DIR}/kueue-values.yaml"
@@ -284,14 +289,15 @@ fi
 
 # The mapping in the committed values MUST name that same DeviceClass. If the DRA
 # layer is ever renamed and this file is not, the Configuration would map a name
-# nothing creates — and Kueue accepts that without complaint, so nothing would
-# ever say so.
+# nothing creates — and Kueue loads that without complaint, so nothing would say
+# so at install time.
 if ! /usr/bin/grep -q -- "- ${DEVICE_CLASS_NAME}\$" "${VALUES_FILE}"; then
   echo "FAIL: ${VALUES_FILE} does not list '${DEVICE_CLASS_NAME}' under deviceClassMappings[].deviceClassNames." >&2
   echo "      That name is the DeviceClass the DRA layer creates (read from" >&2
   echo "      ${DRA_VALUES_FILE}). A Configuration that maps a DeviceClass name" >&2
-  echo "      nothing creates is accepted silently and accounts nothing, so the" >&2
-  echo "      two files are compared here instead." >&2
+  echo "      nothing creates loads silently and leaves the real DeviceClass" >&2
+  echo "      unmapped, so the two files are compared here instead." >&2
+  echo "      Fix: list '${DEVICE_CLASS_NAME}' under deviceClassNames in ${VALUES_FILE}." >&2
   exit 1
 fi
 QUOTA_RESOURCE_NAME="$(sed -n 's/^[[:space:]]*- name:[[:space:]]*\([^[:space:]#]\{1,\}\).*$/\1/p' "${VALUES_FILE}" | tail -1)"
@@ -346,14 +352,14 @@ for _tool in helm jq curl shasum docker; do
 done
 
 # THE ORDERING PRECONDITION, asserted rather than assumed. See the header and
-# kueue-values.yaml for why a mapping naming an absent DeviceClass is a SILENT
-# failure and therefore has to be caught here.
+# kueue-values.yaml for why a mapping naming an absent DeviceClass is not caught
+# at config load and therefore has to be caught here.
 if ! kc get deviceclasses.resource.k8s.io "${DEVICE_CLASS_NAME}" >/dev/null 2>&1; then
   echo "FAIL: no DeviceClass named '${DEVICE_CLASS_NAME}' on '${CLUSTER_NAME}'." >&2
   echo "      This layer's Kueue Configuration maps device classes BY NAME, and a" >&2
   echo "      mapping naming a DeviceClass that does not exist is accepted without" >&2
-  echo "      complaint — the quota resource simply never accounts anything, and a" >&2
-  echo "      ClusterQueue quota for it looks satisfied because it was never used." >&2
+  echo "      complaint at config load. Nothing warns you until a device workload" >&2
+  echo "      is refused." >&2
   echo "      Apply the DRA layer first:" >&2
   echo "        bash ${DRA_ADDON_DIR}/create.sh" >&2
   echo "      then re-run:  bash ${ADDON_DIR}/create.sh" >&2
@@ -428,8 +434,10 @@ if ! /usr/bin/grep -q "apiVersion: config.kueue.x-k8s.io/v1beta2" "${RENDER_TMP}
 fi
 if ! /usr/bin/grep -q "deviceClassMappings:" "${RENDER_TMP}"; then
   echo "FAIL: the rendered kueue-manager-config carries no deviceClassMappings." >&2
-  echo "      That mapping is the whole reason ${VALUES_FILE} exists: without it," >&2
-  echo "      DRA devices are admitted UNCOUNTED." >&2
+  echo "      That mapping is the whole reason ${VALUES_FILE} exists. Without it, at" >&2
+  echo "      Kueue v0.20.6, a device workload is refused DRAResourcesUnresolved" >&2
+  echo "      (\"DeviceClass ... is not mapped\") instead of charged against quota." >&2
+  echo "      Fix: restore the resources.deviceClassMappings block in ${VALUES_FILE}." >&2
   exit 1
 fi
 
@@ -508,7 +516,7 @@ echo "digest-pin: every controller image reference is digest-pinned (pre-apply a
   echo "# run is the evidence that this copy matches the chart at the pinned version."
   echo "#"
   echo "# Every Kueue custom resource this object set defines is served on the"
-  echo "# v1beta2 group; v0.20.0 serves no earlier one. The Configuration in the"
+  echo "# v1beta2 group; v${CHART_VERSION} serves no earlier one. The Configuration in the"
   echo "# kueue-manager-config ConfigMap is in group config.kueue.x-k8s.io/v1beta2"
   echo "# and carries the deviceClassMappings entry from kueue-values.yaml."
   cat "${RENDER_TMP}.sub"
@@ -587,8 +595,10 @@ case "${CONFIG_PROBE}" in
     echo "      Required: config_group=config.kueue.x-k8s.io/v1beta2 AND" >&2
     echo "                maps_deviceclass=yes for '${DEVICE_CLASS_NAME}'." >&2
     echo "      The group alone is the easy half — a stock chart install has the right" >&2
-    echo "      group and NO mapping at all, and without the mapping DRA devices are" >&2
-    echo "      admitted UNCOUNTED." >&2
+    echo "      group and NO mapping at all. Without the mapping, a device workload is" >&2
+    echo "      refused DRAResourcesUnresolved (\"DeviceClass ... is not mapped\")" >&2
+    echo "      instead of charged against quota." >&2
+    echo "      Fix: re-run this script so it applies the committed values." >&2
     echo "      Inspect: kubectl --context ${CONTEXT} -n ${NAMESPACE} get cm kueue-manager-config -o yaml" >&2
     exit 1
     ;;
@@ -596,7 +606,7 @@ esac
 LIVE_MAPPED="$(printf '%s' "${CONFIG_PROBE}" | sed -n 's/.*mappings=\([0-9]\{1,\}\).*/\1/p')"
 if [ "${LIVE_MAPPED:-0}" -lt 1 ]; then
   echo "FAIL: the live Configuration's deviceClassMappings is empty (probe: ${CONFIG_PROBE})." >&2
-  echo "      An empty list satisfies a presence test and accounts nothing." >&2
+  echo "      An empty list satisfies a presence test and maps nothing." >&2
   exit 1
 fi
 
@@ -674,6 +684,39 @@ if [ "${TAS_GANGS}" = "apply" ]; then
     echo "      nothing while Kueue Workloads exist." >&2
     exit 1
   fi
+
+  # Then wait for the BINDING of every admitted gang — each pod carrying a
+  # .spec.nodeName — still never for a Pod phase. Admission only unsuspends the
+  # Job: the Job controller then creates the pods and the REAL kube-scheduler
+  # binds them, asynchronously. verify.sh and checks.json read where the gang
+  # landed from .spec.nodeName, so returning at the admission decision alone is a
+  # race. Measured 2026-11-18 (plan 06-03, profiles run 44227844141, amd64): Kueue
+  # v0.20.6 decided in ~0.25 s, verify.sh read 0.9 s later, and no gang pod was
+  # bound yet. The wanted count is read off the admitted Workloads' own podSets,
+  # so it is not a literal here.
+  echo "==> waiting for the real kube-scheduler to bind the admitted gangs' pods (.spec.nodeName, not Pod phase)" >&2
+  _waited=0
+  WANT_BOUND=0
+  BOUND=0
+  while [ "${_waited}" -lt "${ADMISSION_TIMEOUT}" ]; do
+    WANT_BOUND="$(kc get workloads.kueue.x-k8s.io -A -o json 2>/dev/null \
+                    | jq '[.items[] | select(.metadata.namespace == "kueue-kwok-tas" or .metadata.namespace == "kueue-kwok-tas-block")
+                           | select(.status.admission != null) | .spec.podSets[].count] | add // 0' 2>/dev/null || echo 0)"
+    BOUND="$(kc get pods -A -o json 2>/dev/null \
+               | jq '[.items[] | select(.metadata.namespace == "kueue-kwok-tas" or .metadata.namespace == "kueue-kwok-tas-block")
+                      | select((.spec.nodeName // "") != "")] | length' 2>/dev/null || echo 0)"
+    if [ "${WANT_BOUND:-0}" -gt 0 ] && [ "${BOUND:-0}" -ge "${WANT_BOUND}" ]; then break; fi
+    sleep 2
+    _waited=$((_waited + 2))
+  done
+  if [ "${WANT_BOUND:-0}" -lt 1 ] || [ "${BOUND:-0}" -lt "${WANT_BOUND}" ]; then
+    echo "FAIL: ${BOUND:-0} of the admitted gangs' ${WANT_BOUND:-0} pod(s) carry a .spec.nodeName after ${_waited}s." >&2
+    echo "      Kueue admitted them, so the real kube-scheduler has not bound them or could not:" >&2
+    echo "        kubectl --context ${CONTEXT} -n kueue-kwok-tas get pods -o wide" >&2
+    echo "        kubectl --context ${CONTEXT} -n kueue-kwok-tas-block get pods -o wide" >&2
+    exit 1
+  fi
+  echo "    ${BOUND}/${WANT_BOUND} admitted gang pod(s) bound by the real kube-scheduler" >&2
 fi
 
 WL_COUNT="$(kc get workloads.kueue.x-k8s.io -A --no-headers 2>/dev/null | wc -l | tr -d ' ')"

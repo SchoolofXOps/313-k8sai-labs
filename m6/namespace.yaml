@@ -1,0 +1,9 @@
+# Module 6 lab — the namespace for the network half (the device-and-NIC claim).
+#
+# The storage half runs in the four-path harness's own namespace, spike-02, which the harness
+# creates and removes itself. Nothing in m6-network is routed through a Kueue LocalQueue: Kueue v0.20
+# does not account a claim's `constraints` (matchAttribute), so this claim stays outside the queue.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: m6-network

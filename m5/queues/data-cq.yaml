@@ -1,0 +1,30 @@
+# data: nominal 10 cpu and a borrowing limit of 8, so it can never hold more than 18 cpu on the
+# simulated fleet. Part 1's queued group asks for 32, which is why it is refused on quota.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: data-cq
+spec:
+  cohortName: northwind-tenants
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "example.com/sim-accelerator"]
+      flavors:
+        - name: sim-fleet
+          resources:
+            - name: cpu
+              nominalQuota: "10"
+              borrowingLimit: "8"
+            - name: memory
+              nominalQuota: 64Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "0"
+        - name: real-worker
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 2Gi
+            - name: example.com/sim-accelerator
+              nominalQuota: "1"

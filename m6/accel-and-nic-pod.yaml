@@ -1,0 +1,21 @@
+# Module 6 lab — the Pod that consumes one claim from accel-and-nic-one-root.
+#
+# It prints its environment and sleeps, so the lab can read from INSIDE the container what the two
+# drivers injected when they prepared the allocated pair. Applied with -n m6-network.
+# Image pinned by index digest; the authority is m6/PINS.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: accel-and-nic
+spec:
+  restartPolicy: Never
+  containers:
+  - name: reader
+    image: docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "env; sleep 3600"]
+    resources:
+      claims:
+      - name: devices
+  resourceClaims:
+  - name: devices
+    resourceClaimTemplateName: accel-and-nic-one-root

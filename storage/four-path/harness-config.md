@@ -160,16 +160,30 @@ reported as **not distinguishable**, never as equal — that is a statement abou
 this disk, not about the paths.
 
 **2. No absolute throughput figure presented as disk performance.** The guest cannot evict the
-host's page cache, so an absolute number measures the cache as much as the disk. Two properties
-*are* reproducible and they are what a lesson may rest on:
+host's page cache, so an absolute number measures the cache as much as the disk. Neither property
+a lesson might want to rest on is a fixed number either, and each is stated here as the course's
+runs left it:
 
-- **The tier split.** Both local-filesystem paths beat both network-protocol paths, on write and on
-  read, in **16 of 16 measurements**. Within-tier ordering is **not** reproducible on this hardware
-  and must not be claimed — every observed swap was between the two members of one tier, never
-  across tiers.
-- **The cold first write on the network-filesystem path**, which is the most reproducible figure the
-  harness produced: **3.5 MiB/s in both independent runs**, identical to the published decimal,
-  across two separately provisioned volumes — and **69-125x slower than the same path's second
-  write**. The two local paths show no such penalty (1.0-1.3x). If one number is published from this
-  harness, publish that one: the path that gives a distributed-training lab its shared checkpoint
-  volume is roughly two orders of magnitude slower on its first write than on its second.
+- **The tier split is checked in every run, never assumed.** Both local-filesystem paths came out
+  above both network-protocol paths in every row of the first study (SPIKE-02) and of a later run of
+  this layer, but the course's two runs of M6's lab on the same machine did not repeat it: it held
+  in some repetitions and broke in others, and every break went through the `s3` path, whose
+  server-side cache the client cannot evict (see "Where this does not reach" above). Read the split
+  from this run's own table, on write and on read and in each repetition, and state only what that
+  table shows. Within-tier ordering is **not** reproducible on this hardware and must not be
+  claimed.
+- **The `nfs` path's slow first write is a wait, not a write speed.** The NFS server on that path
+  (NFS-Ganesha, inside the provisioner Pod) runs with `Grace_Period = 90`: for a 90 s grace period
+  after every start or restart it holds back every new open. A first write that starts inside it
+  blocks in `open(2)` until the window closes, whatever its size. On the course's build machine
+  (Apple M1 Pro, Rancher Desktop VM, Kubernetes v1.37.0 on kind v0.33.0, one writer, fsync inside
+  the timed region) a 16 MiB and a 256 MiB first write in one window took 88.09 s and 91.36 s, and a
+  256 MiB first write onto an equally fresh volume, started after the window, took 2.12 s. So the
+  MiB/s this table prints for an `nfs` row that met the window is payload divided by a waiting
+  time, and must not be presented as a speed. The two local paths have no such window. What carries
+  over to a distributed-training lab's shared checkpoint volume is the timing: a checkpoint started
+  within 90 s of the NFS server starting or restarting waits for the window to close.
+
+Both readings are recorded in the course's validation record `planning/lab-tests/m6.md` (not in
+the learner repository): the tier split under § Run 1 and § Lab fold, the wait under § Cold first
+write: cause (2026-11-18).

@@ -1,0 +1,25 @@
+# Part 3's readiness probe. Never created: the lab sends it only as a server-side dry run
+# (kubectl create --dry-run=server), which passes through Kueue's admission webhooks and stores
+# nothing. A dry run that succeeds means the restarted controller is answering its webhooks, so
+# the next real apply will not fail with "failed calling webhook". The name is never used by any
+# other object, so the dry run can never collide with something that already exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: webhook-probe
+  namespace: m5-devices
+  labels:
+    kueue.x-k8s.io/queue-name: devices-queue
+spec:
+  suspend: true
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: holder
+          image: registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi

@@ -1,0 +1,16 @@
+# SYNTHETIC — course-authored for Module 6. No device, NIC or fabric produced any line in this file.
+#
+# RDMA device counters on node-a during run B, read twice 60 seconds apart, written by the course
+# in the form the kernel exposes them under /sys/class/infiniband/<device>/ports/1/counters. Device
+# names and every figure are invented for this exercise.
+#
+# device rdma0, port 1, state ACTIVE, physical state LinkUp
+#   counter                 t=0        t=60       change
+#   port_xmit_data          10288      10302      14
+#   port_rcv_data           10140      10155      15
+#   port_xmit_packets       512        513        1
+#   port_rcv_packets        509        510        1
+#   port_xmit_discards      0          0          0
+#   port_rcv_errors         0          0          0
+#   link_downed             0          0          0
+#   symbol_error            0          0          0
