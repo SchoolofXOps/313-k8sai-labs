@@ -1,0 +1,15 @@
+# The two priorities the tenants' groups carry. A priority does nothing on its own: part 2 shows
+# that a ClusterQueue needs a preemption policy before a higher priority can take anything back.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: tenant-critical
+value: 1000
+description: "Serving and steady research work that must not wait behind batch work."
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: tenant-batch
+value: 100
+description: "Batch work that may borrow idle quota and gives it back when asked."

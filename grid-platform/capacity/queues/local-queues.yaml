@@ -1,0 +1,40 @@
+# One LocalQueue per tenant, in the tenant's own namespace, pointing at that tenant's ClusterQueue.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: research-queue
+  namespace: research
+spec:
+  clusterQueue: research-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: data-queue
+  namespace: data
+spec:
+  clusterQueue: data-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: product-queue
+  namespace: product
+spec:
+  clusterQueue: product-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: devices-queue
+  namespace: m5-devices
+spec:
+  clusterQueue: devices-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: topology-queue
+  namespace: m5-topology
+spec:
+  clusterQueue: topology-cq

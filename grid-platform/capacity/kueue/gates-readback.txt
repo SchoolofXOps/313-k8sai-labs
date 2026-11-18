@@ -1,0 +1,3 @@
+# Kueue DRA gates, read from the controller Pod's own 'Loaded feature gates' line after the defaults were restored
+pod=kueue-controller-manager-64cc7c85d7-jqvhh
+KueueDRADeviceFeasibility:false KueueDRAIntegration:true KueueDRAIntegrationConsumableCapacity:false KueueDRAIntegrationDeviceTaints:false KueueDRAIntegrationExtendedResource:true KueueDRAIntegrationPartitionableDevices:true KueueDRAIntegrationPrioritizedList:false KueueDRARejectWorkloadsWhenDRADisabled:true 
