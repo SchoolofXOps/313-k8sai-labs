@@ -67,6 +67,8 @@
 #
 # Regenerate rendered-pinned.yaml (a deliberate, reviewed change only):
 #   REGENERATE=1 bash labs/clusters/grid-core/addons/nvml-mock/create.sh
+# It writes the file and exits 0 having applied nothing; the next run without
+# REGENERATE applies it, once its diff is reviewed and committed.
 #
 # Env:
 #   export KUBECONFIG=/tmp/grid-core.kubeconfig     # set by the base profile
@@ -249,14 +251,29 @@ if [ "${CONSUMERS_MODE}" != "none" ]; then
   # rather than left for a learner to discover as a Pod that silently ignores
   # the bridge. Selected by the `/gpu` suffix, the same way verify.sh selects
   # the device plugin's resource.
-  BRIDGES="$(kc get deviceclasses.resource.k8s.io -o json 2>/dev/null \
-             | jq -r '[.items[] | select((.spec.extendedResourceName // "") | endswith("/gpu")) | .metadata.name] | join(" ")' 2>/dev/null || true)"
+  # A read that FAILS is not a read that found nothing: "could not look" refuses.
+  if ! DC_JSON="$(kc get deviceclasses.resource.k8s.io -o json 2>/dev/null)" \
+     || ! BRIDGES="$(printf '%s' "${DC_JSON}" | jq -er '[.items[] | select((.spec.extendedResourceName // "") | endswith("/gpu")) | .metadata.name] | join(" ")' 2>/dev/null)"; then
+    echo "FAIL: could not read the DeviceClasses on '${CLUSTER_NAME}', so whether a '/gpu' bridge is there is unknown." >&2
+    echo "      Nothing has been applied. Inspect: kubectl --context ${CONTEXT} get deviceclasses" >&2
+    exit 1
+  fi
   if [ -n "${BRIDGES}" ]; then
     echo "FAIL: DeviceClass(es) '${BRIDGES}' map a '/gpu' extended resource name through DRA." >&2
     echo "      With the device plugin advertising that name on the same worker, the bridge took" >&2
     echo "      no part in scheduling on any arm SPIKE-09 ran: the two paths do not compose." >&2
     echo "      Delete the bridge first:  kubectl --context ${CONTEXT} delete deviceclass ${BRIDGES}" >&2
     echo "      or apply the mock alone:  NVML_MOCK_CONSUMERS=none bash ${ADDON_DIR}/create.sh" >&2
+    exit 1
+  fi
+  # The reverse of mock-only mode's reason: with the optional lab's HAMi device
+  # plugin running, a second device plugin would advertise the same resource
+  # name on the same worker.
+  if kc -n "${NS_PLUGIN}" get ds hami-device-plugin >/dev/null 2>&1; then
+    echo "FAIL: ds/hami-device-plugin is running in '${NS_PLUGIN}' (the optional scheduler lab's), and this mode adds a" >&2
+    echo "      second device plugin advertising the same resource name on the same worker. Nothing has been applied." >&2
+    echo "      Keep HAMi and apply the mock alone:  NVML_MOCK_CONSUMERS=none bash ${ADDON_DIR}/create.sh" >&2
+    echo "      or remove HAMi first, with the optional lab's Teardown." >&2
     exit 1
   fi
 fi
@@ -374,6 +391,9 @@ echo "digest-pin: every image line in the mock render and the consumers file is 
 if [ "${REGENERATE:-0}" = "1" ]; then
   cp "${RENDER_TMP}.candidate" "${RENDERED}"
   echo "==> REGENERATE=1: wrote ${RENDERED}; review its diff before committing" >&2
+  echo "    Nothing was applied: the file is applied only once it is the reviewed, committed one." >&2
+  echo "    Read 'git diff' on it, commit it if it is right, then re-run without REGENERATE." >&2
+  exit 0
 elif ! cmp -s "${RENDER_TMP}.candidate" "${RENDERED}"; then
   echo "FAIL: the committed rendered-pinned.yaml differs from a fresh render of the chart at ${CHART_VERSION}:" >&2
   echo "      ${RENDERED}" >&2

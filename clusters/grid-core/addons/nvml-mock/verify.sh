@@ -5,17 +5,18 @@
 # worker and nowhere else; with the consumers on, the worker's allocatable for
 # the device plugin's resource — SELECTED BY ITS `/gpu` SUFFIX, so the vendor
 # literal is never needed — non-zero, the exporter's DaemonSet Ready, and the
-# exporter serving its DCGM_FI_DEV_XID_ERRORS family through xid-probe.sh's
-# round trip; in mock-only mode, that neither consumer is on the cluster; and
-# in both modes, that every running container is on its registered digest. No
-# assertion is a performance number, and no value of any metric is read.
+# exporter serving per-device series; in mock-only mode, that neither consumer
+# is on the cluster; and in both modes, that every running container is on its
+# registered digest. No assertion is a performance number, and no value of any
+# metric is read.
 #
-# ONE STEP IS NOT READ-ONLY, and it is the last one. The exporter exports no
-# Xid series until an Xid is held, so the family can only be shown by giving it
-# one. xid-probe.sh injects one on the last mock device, reads it, resets that
-# device and replaces the exporter's Pod to drop DCGM's latch, then reads the
-# family gone. It leaves the layer as it found it; its own header says what a
-# learner's earlier injections lose. Everything before it is read-only.
+# IT IS READ-ONLY, every step of it, so it is safe to re-run at any point of a
+# lab, including after the lab's own Xid injections. The one thing it cannot
+# show by reading is the exporter's Xid family, because the exporter exports no
+# Xid series until an Xid is held. That needs a write, so it lives in a script
+# of its own that this one does not run: xid-probe.sh injects one Xid on the
+# last mock device, reads it, resets that device and replaces the exporter Pod.
+# Its header says when it refuses rather than disturb a learner's held Xids.
 #
 # The mode is READ from the cluster — create.sh writes it onto the mock's
 # namespace — so this script verifies the layer that was applied rather than
@@ -110,7 +111,7 @@ if ! kc get namespace "${NS_MOCK}" >/dev/null 2>&1; then
   echo "      Inspect: kubectl --context ${CONTEXT} get namespaces. Apply it: ${APPLY}" >&2
   exit 1
 fi
-MODE="$(kc get namespace "${NS_MOCK}" -o json | jq -r --arg k "${MODE_ANNOTATION}" '.metadata.annotations[$k] // ""')"
+MODE="$(kc get namespace "${NS_MOCK}" -o json 2>/dev/null | jq -r --arg k "${MODE_ANNOTATION}" '.metadata.annotations[$k] // ""' 2>/dev/null)" || MODE=""
 case "${MODE}" in
   device-plugin,dcgm-exporter|none) : ;;
   *)
@@ -151,8 +152,8 @@ pinned_running() {
 
 # --- 3. the mock: Ready, on the labelled worker only, on its pin --------------
 assert_ds_ready "${NS_MOCK}" "${DS_MOCK}"
-PLACEMENT="$(kc -n "${NS_MOCK}" get pod -l app.kubernetes.io/name=nvml-mock -o json \
-             | jq -r '"\([.items[].spec.nodeName] | unique | join(","))"')"
+PLACEMENT="$(kc -n "${NS_MOCK}" get pod -l app.kubernetes.io/name=nvml-mock -o json 2>/dev/null \
+             | jq -r '"\([.items[].spec.nodeName] | unique | join(","))"' 2>/dev/null)" || PLACEMENT=""
 if [ "${PLACEMENT}" != "${WORKER}" ]; then
   echo "FAIL: the mock's Pods are on '${PLACEMENT:-<none>}', not on '${WORKER}' alone." >&2
   echo "      Anywhere else, its node agent rewrites that node's containerd too." >&2
@@ -177,24 +178,31 @@ fi
 # --- 4b. the device plugin: Ready, registering a resource selected by suffix --
 assert_ds_ready "${NS_PLUGIN}" "${DS_PLUGIN}"
 pinned_running "${NS_PLUGIN}" "name=${DS_PLUGIN}" "${PLUGIN_DIGEST}" "device plugin"
-RESOURCE="$(kc get node "${WORKER}" -o json \
-            | jq -r '[.status.allocatable // {} | to_entries[] | select(.key | endswith("/gpu")) | "\(.key)=\(.value)"] | first // ""')"
+RESOURCE="$(kc get node "${WORKER}" -o json 2>/dev/null \
+            | jq -r '[.status.allocatable // {} | to_entries[] | select(.key | endswith("/gpu")) | "\(.key)=\(.value)"] | first // ""' 2>/dev/null)" || RESOURCE=""
 if [ -z "${RESOURCE}" ] || [ "${RESOURCE#*=}" = "0" ]; then
   echo "FAIL: node '${WORKER}' advertises no non-zero allocatable resource ending in '/gpu' (read: '${RESOURCE:-none}')." >&2
   echo "      Inspect: kubectl --context ${CONTEXT} -n ${NS_PLUGIN} logs -l name=${DS_PLUGIN}" >&2
   exit 1
 fi
 
-# --- 4c. the exporter: Ready, on its pin, serving its Xid family --------------
+# --- 4c. the exporter: Ready, on its pin, serving per-device series ----------
 assert_ds_ready "${NS_EXPORTER}" "${DS_EXPORTER}"
 pinned_running "${NS_EXPORTER}" "app.kubernetes.io/name=dcgm-exporter" "${EXPORTER_DIGEST}" "exporter"
-if ! PROBE_OUT="$(bash "${ADDON_DIR}/xid-probe.sh" 2>&1)"; then
-  printf '%s\n' "${PROBE_OUT}" >&2
-  echo "FAIL: the exporter did not serve its DCGM_FI_DEV_XID_ERRORS family through the probe's round trip." >&2
-  echo "      Inspect: bash ${ADDON_DIR}/xid-probe.sh" >&2
+EXPORTER_POD="$(kc -n "${NS_EXPORTER}" get pod -l app.kubernetes.io/name=dcgm-exporter --field-selector status.phase=Running -o json 2>/dev/null \
+                | jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name] | first // ""' 2>/dev/null)" || EXPORTER_POD=""
+DEVICES=""
+if [ -n "${EXPORTER_POD}" ]; then
+  # A read through the API server's Pod proxy. Only the device-index label is
+  # taken from each line; no value of any series.
+  METRICS="$(kc get --raw "/api/v1/namespaces/${NS_EXPORTER}/pods/${EXPORTER_POD}:9400/proxy/metrics" 2>/dev/null)" || METRICS=""
+  DEVICES="$(printf '%s\n' "${METRICS}" | sed -n 's/^DCGM_FI_DEV_[A-Z_]*.*[{,]gpu="\([0-9]\{1,\}\)".*$/\1/p' | sort -un | wc -l | tr -d ' ')"
+fi
+if [ -z "${DEVICES}" ] || [ "${DEVICES}" = "0" ]; then
+  echo "FAIL: the exporter Pod '${EXPORTER_POD:-none}' serves no per-device series." >&2
+  echo "      Inspect: kubectl --context ${CONTEXT} -n ${NS_EXPORTER} logs ${EXPORTER_POD:-ds/${DS_EXPORTER}}" >&2
   exit 1
 fi
-PROBE_LINE="$(printf '%s\n' "${PROBE_OUT}" | sed -n 's/^OK: //p' | sed -n '1p')"
 
-echo "OK: addon-nvml-mock verified on '${CLUSTER_NAME}' (${MODE}) — the mock Ready on '${WORKER}' only, the device plugin registering '${RESOURCE%%=*}' (non-zero allocatable, selected by its /gpu suffix), the exporter Ready, and every container on its registered digest; the exporter served its Xid family: ${PROBE_LINE}"
+echo "OK: addon-nvml-mock verified on '${CLUSTER_NAME}' (${MODE}) — the mock Ready on '${WORKER}' only, the device plugin registering '${RESOURCE%%=*}' (non-zero allocatable, selected by its /gpu suffix), the exporter Ready and serving series for ${DEVICES} mock devices, and every container on its registered digest. Read-only: the Xid round trip writes, so it is a separate step, bash ${ADDON_DIR}/xid-probe.sh"
 echo "  the devices are MOCK DEVICES served by a mock NVML library; no value of any metric was read, and nothing here measures hardware"
