@@ -159,6 +159,19 @@ esac
 ATTACH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_TEMPLATE="${ATTACH_DIR}/fake-nodes.yaml"
 
+# Paths in messages are printed the way the reader's tree has them. The course's
+# source keeps this file under labs/, beside course.config.json; a learner's clone
+# of the labs repository has no labs/ directory, so there the prefix is dropped
+# (kwok/attach/..., clusters/...).
+LAB_ROOT="$(cd "${ATTACH_DIR}/../.." && pwd)"
+rel() {
+  if [ -f "${LAB_ROOT}/../course.config.json" ]; then
+    printf '%s' "$1"
+  else
+    printf '%s' "${1#labs/}"
+  fi
+}
+
 kc() { kubectl --context "${CONTEXT}" "$@"; }
 
 # Fetch a release asset to a local file and refuse to return it unless its
@@ -183,7 +196,7 @@ fetch_verified() {
     echo "FAIL: ${url}" >&2
     echo "      sha256 ${got}" >&2
     echo "      expected ${want}" >&2
-    echo "      The release asset's bytes changed since Spike 0 recorded them." >&2
+    echo "      The release asset's bytes changed since the course recorded them." >&2
     echo "      Re-verify upstream before installing: this manifest carries" >&2
     echo "      CRDs, a ClusterRole and a ClusterRoleBinding, and it is applied" >&2
     echo "      with cluster-admin privilege." >&2
@@ -208,7 +221,7 @@ ${CLUSTER_NAME}
 "*) : ;;
     *)
       echo "FAIL: kind cluster '${CLUSTER_NAME}' not found — this installs INTO the real cluster." >&2
-      echo "      Run: bash labs/clusters/grid-core/create.sh && bash labs/clusters/grid-core/verify.sh" >&2
+      echo "      Run: bash $(rel labs/clusters/grid-core/create.sh) && bash $(rel labs/clusters/grid-core/verify.sh)" >&2
       exit 1
       ;;
   esac
@@ -246,7 +259,7 @@ deploy_controller() {
   # gate independent of that subtlety, because it is a security gate.
   [ -n "${mf}" ] && [ -s "${mf}" ] || {
     echo "FAIL: kwok.yaml did not pass the sha256 content gate." >&2; exit 1; }
-  echo "    sha256 verified against the Spike 0 pin"
+  echo "    sha256 verified against the course's recorded pin"
 
   # Substitute the digest BEFORE the apply, not after.
   #
@@ -281,7 +294,7 @@ deploy_controller() {
   stage="$(fetch_verified "${BASE}/stage-fast.yaml" "${STAGE_MANIFEST_SHA256}" "stage-fast-${KWOK_VERSION}.yaml")"
   [ -n "${stage}" ] && [ -s "${stage}" ] || {
     echo "FAIL: stage-fast.yaml did not pass the sha256 content gate." >&2; exit 1; }
-  echo "    sha256 verified against the Spike 0 pin"
+  echo "    sha256 verified against the course's recorded pin"
   kc apply -f "${stage}"
 
   echo "==> Waiting for kwok-controller to roll out"
@@ -335,7 +348,7 @@ FLEET_SHAPES="${FLEET_SHAPES:-6:3:8:labs/kwok/attach/kueue-v1beta2.yaml 9:3:8:la
 
 warn_fleet_shape() {
   # A manifest whose quota and published arithmetic are fixed text is not BROKEN
-  # by a differently-shaped fleet, it is INVALIDATED by one: the experiment still
+  # by a fleet of a different size or layout, it is INVALIDATED by one: the experiment still
   # runs, every command still exits 0, and the result is reached for a reason the
   # output does not mention. Measured example, from the 6-node manifest's own
   # precondition block: with a quota that is no longer slack relative to the
@@ -353,7 +366,7 @@ warn_fleet_shape() {
     if { [ "${want_nodes}" = "0" ] || [ "${want_nodes}" = "${FAKE_NODES}" ]; } \
        && [ "${want_racks}" = "${RACKS_PER_BLOCK}" ] && [ "${want_cpu}" = "${NODE_CPU}" ]; then
       matched=$(( matched + 1 ))
-      echo "    valid for: ${path}"
+      echo "    valid for: $(rel "${path}")"
     else
       any_warn=1
     fi
@@ -371,15 +384,15 @@ warn_fleet_shape() {
         continue
       fi
       if [ "${want_nodes}" = "0" ]; then
-        echo "          Do NOT apply ${path}" >&2
+        echo "          Do NOT apply $(rel "${path}")" >&2
         echo "            — it needs ${want_racks} rack(s)/block and ${want_cpu} cpu/node (any node count)." >&2
       else
-        echo "          Do NOT apply ${path}" >&2
+        echo "          Do NOT apply $(rel "${path}")" >&2
         echo "            — it needs exactly ${want_nodes} node(s), ${want_racks} rack(s)/block, ${want_cpu} cpu/node." >&2
       fi
     done
     echo "          Re-derive the quota and the arithmetic first, in that file's own" >&2
-    echo "          FLEET PRECONDITION block. A differently-shaped fleet does not break" >&2
+    echo "          FLEET PRECONDITION block. A fleet of a different size or layout does not break" >&2
     echo "          these experiments, it INVALIDATES them, and nothing in the output" >&2
     echo "          says so." >&2
     echo >&2

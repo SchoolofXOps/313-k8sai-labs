@@ -96,7 +96,7 @@ for _f in "${GANGS_FILE}" "${TENANTS_FILE}"; do
   fi
 done
 
-echo "==> Waiting for Kueue to clear its Workload finalizers (controller still up)"
+echo "==> Waiting for Kueue to clear the finalizers on each Kueue Workload (controller still up)"
 _waited=0
 WL_LEFT=0
 while [ "${_waited}" -lt 120 ]; do
